@@ -1,0 +1,214 @@
+# =============================================================================
+# THE ONLY FILE YOU EDIT
+#   action mode:  save as  deploy.config.yml  at your repo's root
+#   folder mode:  lives at .deploy/config.yml (install.sh creates it from this)
+# =============================================================================
+# Adjust this file, push, then press Actions → "Deploy branch" → Run workflow.
+# The live URL appears at the top of the run's summary page.
+#
+# EVERY DEFAULT BELOW ALREADY WORKS. A frontend-only app can deploy with the
+# frontend recipe's two lines; a backend usually only fills in the db: block.
+# Anything you set to TODO_FILL_ME stays blocked: the validator refuses to
+# deploy while one remains, so nothing goes out half-configured.
+#
+# ★ = the only lines that actually vary between projects. Scan for the stars,
+# set what applies, done. Everything UNMARKED has a default that works
+# everywhere — leave it alone until you have a specific reason not to.
+#
+# Secrets are NAMED here, never written here. Add the values as GitHub repo
+# secrets (Settings → Secrets and variables → Actions) — no workflow edit
+# needed, they are picked up automatically:
+#
+#   RAILWAY_API_TOKEN            always — an ACCOUNT token from
+#                                railway.com/account/tokens (a PROJECT token
+#                                cannot create environments)
+#   SEED_S3_ACCESS_KEY_ID        only when restoring a database dump from S3
+#   SEED_S3_SECRET_ACCESS_KEY    only when restoring a database dump from S3
+#
+# -----------------------------------------------------------------------------
+# RECIPES — the two common setups. Copy the lines into the sections below.
+#
+# ── Frontend-only (Vite / React / Vue / any static build) ────────────────────
+#   No Dockerfile needed — a ready-made one ships with this folder. It builds
+#   with `npm run build`, serves the result on Railway's port, answers /health,
+#   and falls back to index.html so app routes work on refresh.
+#
+#     build:
+#       dockerfile_path: .deploy/presets/frontend-static.Dockerfile
+#       build_args: { OUTPUT_DIR: dist }     # dist = Vite; build = CRA
+#
+#   Everything else stays at the defaults. db.engine is already none.
+#
+# ── Backend + MongoDB, seeded from a dump ────────────────────────────────────
+#     db:
+#       engine: mongo
+#       connection_env: MONGO_URI            # the variable your app reads
+#       database_name: myapp
+#       restore:
+#         tool: mongorestore
+#         seed_source: s3://bucket/dump.archive.gz
+#
+#   Then: cp yourdump.archive.gz .deploy/dumps/ && bash .deploy/upload-dump.sh
+# =============================================================================
+
+version: 2
+
+project:
+  # Names the environments (<name>-<branch>) and the app's Railway service.
+  # Lowercase, digits, dashes; keep it under ~20 characters.
+  # Empty = this repository's name, slugified. That is usually fine.
+  name: ""
+
+railway:
+  # From the dashboard URL: railway.com/project/<THIS-UUID>. Not a secret.
+  # Leave empty: the first deploy creates a project and prints its id — paste
+  # that id here afterwards, or every deploy creates ANOTHER new project.
+  project_id: ""                  # ★ paste the id the first deploy prints
+  create_if_missing: true
+  project_name: ""                # empty = project.name
+
+  # Projects belong to a workspace. Leave empty to auto-detect when the account
+  # has only one; the run lists your options if it cannot guess.
+  workspace_id: ""
+
+build:
+  method: dockerfile              # dockerfile | nixpacks
+
+  # Point at the PRODUCTION Dockerfile, not a dev one. A frontend without its
+  # own Dockerfile uses the preset — see the recipe at the top of this file.
+  dockerfile_path: Dockerfile     # ★ or .deploy/presets/frontend-static.Dockerfile
+  context: .
+  target: ""                      # a stage name in a multi-stage Dockerfile
+  build_args: {}                  # non-secret only — never put secrets here
+
+  # Empty = ghcr.io/<owner>/<repo>, worked out at run time. Keeps this portable.
+  image_repo: ""
+  tag_template: "preview-${BRANCH_SLUG}-${SHA7}"
+
+  # Reuse an image this repo's existing CI already built for this commit.
+  # The single biggest speed-up available — put that workflow's tag pattern
+  # here if the project has one.
+  reuse_registry: true
+  reuse_tag_templates:
+    - "sha-${SHA7}"
+
+  # Boot the built image ON THE CI RUNNER and prove it answers the health
+  # path before anything is created on Railway. Catches a wrong runtime.port,
+  # a wrong health path, a crash at startup, and IPv4-only apps (Railway
+  # connects over IPv6) — in seconds, with exact instructions, instead of a
+  # five-minute platform timeout that says nothing.
+  #   auto  = run when there is no database (the app must boot standalone)
+  #   true  = always    |    false = never
+  smoke_test: auto
+
+  # Who may download the built image from GitHub's registry:
+  #   public  = anyone. Works on any Railway plan; the first deploy pauses once
+  #             until you flip the GitHub package to Public. Your BUILT backend
+  #             code is downloadable by anyone who looks.
+  #   private = nobody but you and Railway. Needs Railway Pro. The image stays
+  #             locked; the pipeline hands Railway a pull token automatically.
+  #             Create ONE GitHub token (classic) with the read:packages scope
+  #             at github.com/settings/tokens and add it as the repo secret
+  #             named below — the SAME token works in every repo you own.
+  registry_visibility: public
+  registry_password_env: GHCR_PULL_TOKEN   # secret holding that token
+  registry_username: ""                    # empty = the repository's owner
+
+runtime:
+  # The path that returns 200. ${TOKENS} are allowed. Check whether it sits
+  # behind or in front of the app's base-path prefix — getting this wrong
+  # means deploys hang. The frontend preset serves /health, so this default
+  # works there.
+  health_check_path: /health      # ★ the path in YOUR app that returns 200
+  health_check_timeout: 300
+
+  # The prefix every app route sits behind, e.g. /api/v1. Only used to report
+  # a paste-ready base URL at the end of a deploy — it does NOT route anything;
+  # the app itself must actually serve behind this prefix. Worth setting: on a
+  # prefixed app the bare domain returns 404, which reads like a failed deploy
+  # when it isn't.
+  #
+  # Set ONE of these, or neither if routes are served at the root:
+  base_path: ""                   # a literal, e.g. /api/v1 — ${TOKENS} allowed
+  base_path_env: ""               # or the variable that already holds it,
+                                  # so the value isn't written down twice
+  #
+  # Recipe — prefix routes by BRANCH (app must read the variable and mount
+  # its routes there; each branch already gets its own URL, this only adds
+  # the matching path):
+  #   runtime:
+  #     base_path_env: BASE_PATH
+  #     health_check_path: /${BRANCH_SLUG}/health   # if health moves too
+  #   env:
+  #     per_env:
+  #       BASE_PATH: "/${BRANCH_SLUG}"              # /dev on dev, /rbac on rbac
+
+  # The port the app listens on inside the container. The machinery sets it
+  # as the variable named in port_env AND aims the public domain at it, so
+  # the two can never disagree (mismatched ports read as 502 while the app
+  # runs fine). Change port only if the app hardcodes its own.
+  port: 8080
+  port_env: PORT
+  start_command: ""               # "" = the image's own CMD
+
+db:
+  engine: none                    # ★ none | mongo | postgres
+  connection_env: ""              # ★ the variable the app reads, e.g. MONGO_URI
+  service_image: mongo:8          # postgres:16 for postgres.
+                                  # MUST be >= the version that made the dump.
+  service_name: db
+  database_name: ""               # ★ needed once an engine is set
+  volume_mount: /data/db          # /var/lib/postgresql/data for postgres
+  keep_public_proxy: false
+  extra_connection_env: []        # other names for the same connection string
+
+  restore:
+    tool: none                    # ★ none | mongorestore | pg_restore | psql
+    format: archive               # archive | directory | custom | plain
+    gzip: true
+    mode: always                  # always = reload every deploy (reproducible)
+                                  # once   = only on first create (keeps data)
+
+    # Where CI fetches the dump. Put dumps in .deploy/dumps/ and run
+    # `bash .deploy/upload-dump.sh` to get them here.
+    seed_source: ""               # ★ e.g. s3://bucket/dump.archive.gz
+    s3_endpoint: ""               # not a secret
+    s3_region: us-east-1
+    s3_key_id_env: SEED_S3_ACCESS_KEY_ID
+    s3_secret_env: SEED_S3_SECRET_ACCESS_KEY
+    extra_args: []                # e.g. ["--nsFrom=old.*","--nsTo=new.*"]
+
+  migrate:
+    command: ""                   # "" = SKIP, deliberately and supported
+    run_in: app_image             # app_image | none
+
+env:
+  # Non-secret, every stage. Safe in git.
+  static: {}
+
+  # NAMES ONLY. Values go in GitHub repo secrets.
+  # Do NOT list db.connection_env here — the machinery provisions it.
+  secrets: []                     # ★ e.g. [JWT_SECRET, STRIPE_API_KEY]
+
+  # Stage overrides. These BEAT the generic secrets above, so a preview cannot
+  # accidentally inherit a production value.
+  secrets_by_stage:
+    preview: {}
+
+  # Derived per branch. Tokens: ${BRANCH_SLUG} ${BRANCH} ${SHA} ${SHA7}
+  # ${ENV_NAME} ${STAGE} ${PROJECT_NAME}
+  per_env: {}
+
+preview_defaults:
+  replicas: 1                     # >1 double-fires any in-process cron jobs
+  auto_sleep: true                # scale to zero when idle — saves credit.
+                                  # Turned on only AFTER the first healthy
+                                  # response; during the rollout it can block
+                                  # Railway's own healthcheck.
+  env: {}                         # non-secret preview values live here, in
+                                  # plain sight, e.g. a throwaway bucket name
+
+destroy:
+  protected_branches:
+    - main
+    - master

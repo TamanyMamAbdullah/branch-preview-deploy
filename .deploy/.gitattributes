@@ -1,0 +1,8 @@
+# MACHINERY. This file travels with the folder and protects it on Windows:
+# bash cannot run scripts with CRLF line endings, and git's autocrlf setting
+# would otherwise rewrite them on checkout. These rules pin everything here to
+# LF in every repository this folder is copied into.
+* text=auto eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.Dockerfile text eol=lf

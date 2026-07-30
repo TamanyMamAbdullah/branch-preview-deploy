@@ -1,0 +1,119 @@
+# =============================================================================
+# The reusable workflow behind the one-file setup. A project calls this with
+# a single tiny workflow (see templates/deploy.yml) and never edits it again:
+#
+#   jobs:
+#     deploy:
+#       uses: TamanyMamAbdullah/branch-preview-deploy/.github/workflows/run.yml@v2
+#       secrets: inherit
+#
+# It owns the logic for every trigger, so the caller stays dumb:
+#   workflow_dispatch        deploy or destroy the picked branch (the button)
+#   pull_request [closed]    destroy that branch's preview (merged OR abandoned)
+#   delete                   destroy the deleted branch's preview
+#
+# destroy.protected_branches in the project's config still applies: main and
+# master refuse to be destroyed no matter what fires this.
+# =============================================================================
+name: Deploy (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      action:
+        description: >-
+          deploy | destroy | validate | doctor. Blank = decide from the event:
+          dispatch input, or destroy on PR-close / branch-delete.
+        type: string
+        default: ""
+      stage:
+        description: "preview | dev | prod"
+        type: string
+        default: preview
+      seed:
+        description: "Override the dump for this run (s3://...)"
+        type: string
+        default: ""
+      config:
+        description: "Path to the config file. Blank = auto-discover"
+        type: string
+        default: ""
+    outputs:
+      base_url:
+        description: "App URL including its route prefix"
+        value: ${{ jobs.run.outputs.base_url }}
+      deploy_url:
+        description: "Bare public URL of the deployment"
+        value: ${{ jobs.run.outputs.deploy_url }}
+      health_url:
+        description: "The health-check URL that answered 200"
+        value: ${{ jobs.run.outputs.health_url }}
+
+jobs:
+  run:
+    # delete events also fire for tags; PRs from forks carry no secrets.
+    # Any other event (dispatch, push, schedule, ...) passes straight through.
+    if: >
+      (github.event_name != 'pull_request' && github.event_name != 'delete') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'delete' && github.event.ref_type == 'branch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    concurrency:
+      # One run per branch. A deploy and its cleanup share the same group, so
+      # they queue instead of racing each other on the same environment.
+      group: deploy-${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.event_name == 'delete' && github.event.ref || github.ref_name }}
+      cancel-in-progress: false
+
+    outputs:
+      base_url:   ${{ steps.kit.outputs.base_url }}
+      deploy_url: ${{ steps.kit.outputs.deploy_url }}
+      health_url: ${{ steps.kit.outputs.health_url }}
+
+    steps:
+      # The project. On cleanup events the branch may already be gone — the
+      # default checkout falls back to what exists, which is all destroy needs
+      # (the config and the branch NAME, not the branch's files).
+      - uses: actions/checkout@v4
+
+      # The kit itself, at the exact commit the caller's @tag pinned. GitHub
+      # exposes that commit as job_workflow_sha; the repository name has to be
+      # written out because no context variable carries it.
+      # (Renaming this repository? Update this line, templates/deploy.yml and
+      # .deploy/SOURCE together.)
+      - uses: actions/checkout@v4
+        with:
+          repository: TamanyMamAbdullah/branch-preview-deploy
+          ref: ${{ github.job_workflow_sha }}
+          path: .deploy-kit
+
+      - name: Work out what to do
+        id: mode
+        env:
+          EVENT:        ${{ github.event_name }}
+          INPUT_ACTION: ${{ inputs.action }}
+          PR_BRANCH:    ${{ github.event.pull_request.head.ref }}
+          DELETED_REF:  ${{ github.event.ref }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request) ACTION=destroy; BRANCH="$PR_BRANCH" ;;
+            delete)       ACTION=destroy; BRANCH="$DELETED_REF" ;;
+            *)            ACTION="${INPUT_ACTION:-deploy}"; BRANCH="$GITHUB_REF_NAME" ;;
+          esac
+          echo "action=$ACTION" >>"$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >>"$GITHUB_OUTPUT"
+          echo "$ACTION → $BRANCH"
+
+      - name: ${{ steps.mode.outputs.action }} → ${{ steps.mode.outputs.branch }}
+        id: kit
+        uses: ./.deploy-kit
+        with:
+          action: ${{ steps.mode.outputs.action }}
+          stage:  ${{ inputs.stage }}
+          seed:   ${{ inputs.seed }}
+          config: ${{ inputs.config }}
+          branch: ${{ steps.mode.outputs.branch }}
+          secrets: ${{ toJSON(secrets) }}

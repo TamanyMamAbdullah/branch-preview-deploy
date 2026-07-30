@@ -1,0 +1,6 @@
+# Database dumps stay OUT of git — they are large, and git keeps every version
+# forever, so each new dump would permanently grow the repository.
+# Upload them instead:  bash .deploy/upload-dump.sh
+*
+!.gitignore
+!README.md

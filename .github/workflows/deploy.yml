@@ -1,0 +1,105 @@
+# =============================================================================
+# Branch deploy → Railway
+#
+# GENERIC. This file is identical in every project and never needs editing —
+# not even when you add a secret.
+#
+# Do not edit this copy by hand. It is installed from .deploy/workflow/deploy.yml
+# by `bash .deploy/install.sh`, so an edit here is lost on the next upgrade.
+# All configuration lives in .deploy/config.yml.
+#
+# The branch you deploy is the branch you run this on — GitHub's own ref picker
+# is the branch picker. Once this is on your default branch it appears for all.
+# =============================================================================
+name: Deploy branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        type: choice
+        options: [deploy, destroy]
+        default: deploy
+        required: true
+      stage:
+        description: "Which stage's settings to apply"
+        type: choice
+        options: [preview, dev, prod]
+        default: preview
+        required: true
+      seed:
+        description: "Override the dump for this run (s3://...). Blank = use config.yml"
+        type: string
+        required: false
+
+concurrency:
+  # One run per branch. A second dispatch waits instead of racing the first,
+  # which would otherwise have two jobs provisioning the same environment.
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write          # push the image to GHCR using the built-in token
+
+jobs:
+  run:
+    name: ${{ inputs.action }} → ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    # Exposed so a later job can test against the deploy without being told the
+    # URL — base_url already includes the app's route prefix.
+    outputs:
+      base_url:   ${{ steps.deploy.outputs.base_url }}
+      deploy_url: ${{ steps.deploy.outputs.deploy_url }}
+      health_url: ${{ steps.deploy.outputs.health_url }}
+
+    env:
+      DEPLOY_ACTION: ${{ inputs.action }}
+      DEPLOY_STAGE:  ${{ inputs.stage }}
+      DEPLOY_BRANCH: ${{ github.ref_name }}
+      DEPLOY_SHA:    ${{ github.sha }}
+      DEPLOY_SEED_OVERRIDE: ${{ inputs.seed }}
+
+      # ----------------------------------------------------------------------
+      # Every repo secret, in one go.
+      #
+      # This is what keeps the file generic. Normally each secret has to be
+      # listed here by name, so onboarding a project means editing the workflow
+      # and forgetting one is a confusing runtime failure. Passing the whole
+      # context means config.yml can name any secret and it just works.
+      #
+      # GitHub still masks every value in the logs. The job could already read
+      # any of these, so this widens nothing.
+      # ----------------------------------------------------------------------
+      DEPLOY_SECRETS_JSON: ${{ toJSON(secrets) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          set -euo pipefail
+          # jq and the AWS CLI ship with ubuntu-latest; yq does not.
+          if ! command -v yq >/dev/null 2>&1; then
+            sudo wget -qO /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+
+      - name: Log in to GHCR
+        if: inputs.action == 'deploy'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One step. run.sh handles the whole pipeline in a single process, and its
+      # EXIT trap guarantees the database's temporary public port is closed
+      # however the run ends — including cancellation.
+      - name: ${{ inputs.action }}
+        id: deploy
+        run: bash .deploy/run.sh "${{ inputs.action }}"

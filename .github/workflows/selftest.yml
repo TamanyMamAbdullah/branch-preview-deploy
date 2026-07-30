@@ -1,0 +1,39 @@
+# =============================================================================
+# CI for THIS repository only — it does not travel with .deploy/.
+# Proves on every push that the kit is complete, generic, and that the blank
+# template really does validate with zero edits.
+# =============================================================================
+name: Self-test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          set -euo pipefail
+          if ! command -v yq >/dev/null 2>&1; then
+            sudo wget -qO /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+
+      - name: Self-test (portable, complete, no project-specific values)
+        run: bash .deploy/selftest.sh
+
+      - name: Validate the blank template
+        # This repo has no Dockerfile — it is the kit, not an app — so the
+        # file-existence checks are skipped. Everything else runs for real.
+        env:
+          DEPLOY_SKIP_FILE_CHECKS: "1"
+        run: bash .deploy/run.sh validate

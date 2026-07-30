@@ -1,0 +1,60 @@
+# =============================================================================
+# Auto-cleanup: the moment a branch's pull request closes (merged OR
+# abandoned), or the branch itself is deleted, its preview environment is
+# destroyed — app, database, volume. Nothing keeps billing by accident.
+#
+# GENERIC. This file is identical in every project and never needs editing.
+# Do not edit this copy by hand — it is installed from
+# .deploy/workflow/cleanup.yml by `bash .deploy/install.sh`.
+#
+# destroy.protected_branches in .deploy/config.yml still applies: main and
+# master refuse to be destroyed no matter what fires this.
+# Note: event-triggered workflows run from the DEFAULT branch, so this starts
+# working once it is merged there.
+# =============================================================================
+name: Destroy preview on merge
+
+on:
+  pull_request:
+    types: [closed]          # merged or abandoned — either way, stop billing
+  delete: {}                 # any branch deletion (incl. GitHub's auto-delete)
+
+permissions:
+  contents: read
+
+jobs:
+  destroy:
+    # delete events also fire for tags; PRs from forks carry no secrets.
+    if: >
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'delete' && github.event.ref_type == 'branch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    concurrency:
+      # Same group a deploy of that branch uses, so cleanup never races one.
+      group: deploy-refs/heads/${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.event.ref }}
+      cancel-in-progress: false
+
+    env:
+      DEPLOY_ACTION: destroy
+      DEPLOY_STAGE: preview
+      DEPLOY_BRANCH: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.event.ref }}
+      DEPLOY_SECRETS_JSON: ${{ toJSON(secrets) }}
+
+    steps:
+      # The default branch — the branch being cleaned up may already be gone.
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          set -euo pipefail
+          if ! command -v yq >/dev/null 2>&1; then
+            sudo wget -qO /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+
+      - name: Destroy the branch's environment
+        run: bash .deploy/run.sh destroy

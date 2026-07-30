@@ -1,0 +1,9 @@
+# OS noise
+.DS_Store
+Thumbs.db
+
+# install.sh keeps a copy of a pre-existing workflow it replaced
+*.backup
+
+# local packaging experiments — never ship an archive of the kit through git
+.deploy.zip

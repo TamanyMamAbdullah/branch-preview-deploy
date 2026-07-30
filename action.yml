@@ -1,0 +1,98 @@
+# =============================================================================
+# Use the deploy kit straight from this repository — nothing to copy into the
+# project. GitHub downloads the kit at the pinned version and runs it.
+#
+#   - uses: TamanyMamAbdullah/branch-preview-deploy@v2
+#     with:
+#       secrets: ${{ toJSON(secrets) }}
+#
+# Most projects should NOT use this step directly: the reusable workflow
+# (.github/workflows/run.yml) wraps it with the triggers, the auto-cleanup
+# logic and the per-branch queueing. See the README's one-file setup.
+#
+# The kit still works the classic way too — copied in as .deploy/ — and both
+# modes run the exact same scripts.
+# =============================================================================
+name: "Branch Preview Deploy"
+description: >-
+  Deploy any branch to Railway as a throwaway preview — app, database, seeded
+  data — and destroy it again. All configuration is one YAML file in your repo.
+branding:
+  icon: upload-cloud
+  color: purple
+
+inputs:
+  action:
+    description: "deploy | destroy | validate | doctor"
+    default: deploy
+  stage:
+    description: "preview | dev | prod — which stage's settings to apply"
+    default: preview
+  seed:
+    description: "Override the dump for this run (s3://...). Blank = use the config"
+    default: ""
+  config:
+    description: "Path to the config file. Blank = .deploy/config.yml, then deploy.config.yml"
+    default: ""
+  branch:
+    description: "Branch to deploy/destroy. Blank = the branch this run is on"
+    default: ""
+  secrets:
+    description: >-
+      Pass ${{ toJSON(secrets) }}. This is what lets the config name any repo
+      secret without ever editing a workflow. GitHub still masks every value
+      in the logs, and the job could already read all of them — this widens
+      nothing.
+    required: true
+
+outputs:
+  base_url:
+    description: "App URL including its route prefix — paste-ready"
+    value: ${{ steps.run.outputs.base_url }}
+  deploy_url:
+    description: "Bare public URL of the deployment"
+    value: ${{ steps.run.outputs.deploy_url }}
+  health_url:
+    description: "The health-check URL that answered 200"
+    value: ${{ steps.run.outputs.health_url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install yq
+      shell: bash
+      run: |
+        set -euo pipefail
+        # jq and the AWS CLI ship with ubuntu-latest; yq does not.
+        if ! command -v yq >/dev/null 2>&1; then
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+        fi
+
+    - name: Log in to GHCR
+      if: ${{ inputs.action == 'deploy' }}
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    # One step. run.sh handles the whole pipeline in a single process, and its
+    # EXIT trap guarantees the database's temporary public port is closed
+    # however the run ends — including cancellation.
+    - name: ${{ inputs.action }}
+      id: run
+      shell: bash
+      env:
+        DEPLOY_ACTION: ${{ inputs.action }}
+        DEPLOY_STAGE: ${{ inputs.stage }}
+        DEPLOY_BRANCH: ${{ inputs.branch }}
+        DEPLOY_SHA: ${{ github.sha }}
+        DEPLOY_SEED_OVERRIDE: ${{ inputs.seed }}
+        DEPLOY_CONFIG: ${{ inputs.config }}
+        # The kit runs from the action's own checkout; the project being
+        # deployed is the workflow's workspace. run.sh cds there.
+        DEPLOY_PROJECT_DIR: ${{ github.workspace }}
+        DEPLOY_SECRETS_JSON: ${{ inputs.secrets }}
+      run: bash "${{ github.action_path }}/.deploy/run.sh" "${{ inputs.action }}"

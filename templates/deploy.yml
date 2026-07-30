@@ -1,0 +1,54 @@
+# =============================================================================
+# THE ONE FILE TO PASTE. Save as  .github/workflows/deploy.yml  in your repo.
+# It never needs editing — not even when you add a secret.
+#
+# Everything you configure lives in ONE file in your repo:
+#   deploy.config.yml   at the repo root (start from the kit's config.example.yml)
+# plus ONE repo secret:  RAILWAY_API_TOKEN
+#   (Settings → Secrets and variables → Actions; an ACCOUNT token from
+#    railway.com/account/tokens — a PROJECT token cannot create environments)
+#
+# Then: Actions → "Deploy branch" → Run workflow → pick your branch.
+# The live URL appears at the top of the run's summary page.
+# Previews destroy themselves when their PR closes or their branch is deleted.
+# =============================================================================
+name: Deploy branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        type: choice
+        options: [deploy, destroy]
+        default: deploy
+        required: true
+      stage:
+        description: "Which stage's settings to apply"
+        type: choice
+        options: [preview, dev, prod]
+        default: preview
+        required: true
+      seed:
+        description: "Override the dump for this run (s3://...). Blank = config"
+        type: string
+        required: false
+  pull_request:
+    types: [closed]          # merged or abandoned — either way, stop billing
+  delete: {}                 # any branch deletion (incl. GitHub's auto-delete)
+
+permissions:
+  contents: read
+  packages: write            # push the image to GHCR using the built-in token
+
+jobs:
+  deploy:
+    # secrets: inherit hands your repo's secrets to the kit's workflow run —
+    # which still executes inside YOUR repository, on GitHub's runners. That is
+    # how deploy.config.yml can name any secret without this file ever changing.
+    uses: TamanyMamAbdullah/branch-preview-deploy/.github/workflows/run.yml@v2
+    secrets: inherit
+    with:
+      action: ${{ inputs.action || '' }}     # blank on PR-close/delete → destroy
+      stage:  ${{ inputs.stage  || 'preview' }}
+      seed:   ${{ inputs.seed   || '' }}

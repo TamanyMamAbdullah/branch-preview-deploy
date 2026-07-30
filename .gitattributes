@@ -1,0 +1,6 @@
+# Keep line endings sane across Windows/macOS/Linux. Shell scripts especially
+# must stay LF — bash cannot run CRLF files. .deploy/ carries its own copy of
+# these rules so they travel with the folder.
+* text=auto
+*.sh text eol=lf
+*.yml text eol=lf
