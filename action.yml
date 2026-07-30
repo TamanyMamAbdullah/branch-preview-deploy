@@ -39,10 +39,13 @@ inputs:
     default: ""
   secrets:
     description: >-
-      Pass ${{ toJSON(secrets) }}. This is what lets the config name any repo
-      secret without ever editing a workflow. GitHub still masks every value
-      in the logs, and the job could already read all of them — this widens
-      nothing.
+      The workflow's secrets as one JSON value — pass toJSON(secrets) inside
+      an expression, as shown in the header above. (Written without expression
+      syntax here: the runner evaluates this file, and the secrets context
+      does not exist inside a composite action.) This is what lets the config
+      name any repo secret without ever editing a workflow. GitHub still masks
+      every value in the logs, and the job could already read all of them —
+      this widens nothing.
     required: true
 
 outputs:
