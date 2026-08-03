@@ -60,9 +60,10 @@ project:
 
 railway:
   # From the dashboard URL: railway.com/project/<THIS-UUID>. Not a secret.
-  # Leave empty: the first deploy creates a project and prints its id — paste
-  # that id here afterwards, or every deploy creates ANOTHER new project.
-  project_id: ""                  # ★ paste the id the first deploy prints
+  # Leave empty: deploys (and cleanups) find the project by its name and reuse
+  # it, creating it only when none exists. Pasting the id is OPTIONAL — it
+  # pins the project so a rename can't break the link, and skips the lookup.
+  project_id: ""                  # optional — pin the id the first deploy prints
   create_if_missing: true
   project_name: ""                # empty = project.name
 

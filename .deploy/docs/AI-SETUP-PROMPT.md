@@ -105,6 +105,7 @@ prove the rest passes with throwaway env values, e.g.
       line, one-sentence reason).
    4. Commit and push, then: GitHub → Actions → "Deploy branch" → pick the
       branch → Run workflow. The URL appears at the top of the run summary.
-   5. After the first deploy: paste the printed Railway project id into
-      `railway.project_id` in `.deploy/config.yml`, or every deploy creates
-      another project.
+   5. Optional hardening: after the first deploy, the run prints the Railway
+      project id — pasting it into `railway.project_id` in
+      `.deploy/config.yml` pins the project (later runs reuse it by name
+      automatically; the pin just also survives a project rename).

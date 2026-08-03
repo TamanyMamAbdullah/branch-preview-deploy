@@ -56,8 +56,9 @@ step_validate() {
   # --- railway ----------------------------------------------------------------
   if [[ -z "$(cfg '.railway.project_id' '')" ]]; then
     if [[ "$(cfg '.railway.create_if_missing' 'false')" == "true" ]]; then
-      log_warn "railway.project_id is empty — a project will be created and its id printed."
-      log_warn "Paste that id into config.yml, or every deploy makes another new project."
+      log_warn "railway.project_id is empty — an existing project with this name will be"
+      log_warn "reused, or a new one created. Optional: pin the id in config.yml so a"
+      log_warn "project rename can never break the link."
     else
       _problem "railway.project_id is required (or set railway.create_if_missing: true)"
     fi

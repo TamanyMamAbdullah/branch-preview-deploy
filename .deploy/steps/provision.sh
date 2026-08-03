@@ -26,47 +26,67 @@ Check the id, and that the token belongs to the same account or team."
     pname="$(cfg '.railway.project_name' '')"
     [[ -z "$pname" ]] && pname="$PROJECT_NAME"
 
-    # A project must belong to a workspace. Auto-detect when there is only one,
-    # so this isn't another value to look up and paste in. Detection is
-    # best-effort: a workspace-scoped token cannot list workspaces at all, but
-    # can often still create the project — so an empty answer downgrades to a
-    # warning and the create is attempted anyway. If Railway then refuses, the
-    # error is shown along with exactly what to configure.
-    ws="$(cfg '.railway.workspace_id' '')"
-    if [[ -z "$ws" ]]; then
-      ws="$(rw_workspace_default)"
-      if [[ -n "$ws" ]]; then
-        log_info "workspace: $ws (auto-detected — the only one on this account)"
-      else
-        local wslist; wslist="$(rw_workspace_list)"
-        if [[ -n "$wslist" ]]; then
-          log_err "this account has more than one workspace, so the right one cannot be guessed."
-          log_err "Set railway.workspace_id in .deploy/config.yml to one of:"
-          printf '%s\n' "$wslist" | sed 's/^/      /' >&2
-          die "railway.workspace_id is required for this account"
-        fi
-        log_warn "could not list this account's workspaces (a workspace-scoped token"
-        log_warn "cannot ask) — attempting to create the project without one"
-      fi
+    # A previous run may already have created this project without its id ever
+    # being pasted back into config.yml. Look it up by name before creating,
+    # so a missing paste cannot produce a duplicate project on every deploy.
+    local found matches
+    found="$(rw_project_find_by_name "$pname")"
+    matches="$(printf '%s\n' "$found" | grep -c . || true)"
+    if (( matches == 1 )); then
+      PROJECT_ID="$found"
+      log_ok "found existing project '$pname' ($PROJECT_ID) — reusing it"
+      log_info "optional: pin it with railway.project_id in config.yml (skips this"
+      log_info "lookup and survives a project rename)"
+    elif (( matches > 1 )); then
+      log_err "this account has $matches projects named '$pname' — the right one cannot"
+      log_err "be guessed. Set railway.project_id in .deploy/config.yml to one of:"
+      printf '%s\n' "$found" | sed 's/^/      /' >&2
+      die "railway.project_id is required when several projects share a name"
     else
-      log_info "workspace: $ws (from config)"
-    fi
+      # A project must belong to a workspace. Auto-detect when there is only one,
+      # so this isn't another value to look up and paste in. Detection is
+      # best-effort: a workspace-scoped token cannot list workspaces at all, but
+      # can often still create the project — so an empty answer downgrades to a
+      # warning and the create is attempted anyway. If Railway then refuses, the
+      # error is shown along with exactly what to configure.
+      ws="$(cfg '.railway.workspace_id' '')"
+      if [[ -z "$ws" ]]; then
+        ws="$(rw_workspace_default)"
+        if [[ -n "$ws" ]]; then
+          log_info "workspace: $ws (auto-detected — the only one on this account)"
+        else
+          local wslist; wslist="$(rw_workspace_list)"
+          if [[ -n "$wslist" ]]; then
+            log_err "this account has more than one workspace, so the right one cannot be guessed."
+            log_err "Set railway.workspace_id in .deploy/config.yml to one of:"
+            printf '%s\n' "$wslist" | sed 's/^/      /' >&2
+            die "railway.workspace_id is required for this account"
+          fi
+          log_warn "could not list this account's workspaces (a workspace-scoped token"
+          log_warn "cannot ask) — attempting to create the project without one"
+        fi
+      else
+        log_info "workspace: $ws (from config)"
+      fi
 
-    log_info "creating project '$pname'"
-    PROJECT_ID="$(rw_project_create "$pname" "$ws")" || die "could not create the Railway project.
+      log_info "creating project '$pname'"
+      PROJECT_ID="$(rw_project_create "$pname" "$ws")" || die "could not create the Railway project.
 If the error above mentions a workspace or team: set railway.workspace_id in
 .deploy/config.yml (open railway.com, pick the workspace, the id is in the
 URL) — OR create an empty project in the dashboard yourself and paste its id
 into railway.project_id. Either one unblocks every future deploy."
-    log_ok "created project $PROJECT_ID"
+      log_ok "created project $PROJECT_ID"
 
-    log_warn "══════════════════════════════════════════════════════════"
-    log_warn " Put this in .deploy/config.yml so future runs reuse it:"
-    log_warn "     railway:"
-    log_warn "       project_id: \"$PROJECT_ID\""
-    log_warn " Until you do, every deploy creates ANOTHER new project."
-    log_warn "══════════════════════════════════════════════════════════"
-    summary "> ⚠️ **New Railway project created.** Add \`project_id: \"$PROJECT_ID\"\` under \`railway:\` in \`.deploy/config.yml\`, or the next deploy makes another one."
+      log_warn "══════════════════════════════════════════════════════════"
+      log_warn " New project: $PROJECT_ID"
+      log_warn " Future deploys and cleanups find it by its name ('$pname')"
+      log_warn " automatically. Optional, but safer: pin it in .deploy/config.yml —"
+      log_warn "     railway:"
+      log_warn "       project_id: \"$PROJECT_ID\""
+      log_warn " (a pinned id survives a project rename and skips the lookup)"
+      log_warn "══════════════════════════════════════════════════════════"
+      summary "> ℹ️ **New Railway project created** (\`$PROJECT_ID\`). Future deploys and cleanups find it by name automatically. Optional: pin it with \`project_id: \"$PROJECT_ID\"\` under \`railway:\` in the config so a project rename can never break the link."
+    fi
   fi
   group_end
 

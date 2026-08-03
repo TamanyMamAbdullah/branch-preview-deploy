@@ -18,6 +18,134 @@ its own.
 
 ---
 
+## 🤖 Fastest start — one copy-paste into an AI
+
+Using Claude Code, Cursor, or GitHub Copilot? You don't have to configure
+anything yourself. Open your AI assistant **in the root folder of the project
+you want to deploy**, copy the prompt below, paste it in. The AI installs the
+kit, studies your project, fills in the config, verifies its own work, and
+hands you a short table of the keys only a human can add — with where to get
+each one.
+
+<details>
+<summary><b>👉 Click to open the prompt — then hover the block and press the copy icon in its top-right corner</b></summary>
+
+````markdown
+You are setting up push-button Railway deployments for THIS project using the
+**Branch Preview Deploy kit** — a finished, tested tool. One click in GitHub
+Actions deploys any branch to Railway (backend with its own throwaway
+database, or a frontend served from its build) and returns a live URL; the
+preview destroys itself when its PR closes or its branch is deleted.
+
+Kit home: https://github.com/TamanyMamAbdullah/branch-preview-deploy.git
+
+Your ONLY job is to install and configure the kit for this project. Do not
+redesign it, do not "improve" it, do not edit its machinery.
+
+## Step 0 — ask the user ONE question before touching anything
+
+> Is your Railway account on the **Pro** plan or the **Free/Hobby** plan?
+> (Not sure? Check railway.com → your avatar → Account Settings → Plans.)
+
+- **Pro** → later you will set `build.registry_visibility: private` in the
+  config — for BOTH frontend and backend projects. The built Docker image
+  stays locked on GitHub; nobody can ever download it. This requires the
+  `GHCR_PULL_TOKEN` secret (row 2 of the final table).
+- **Free/Hobby** → set `build.registry_visibility: public`. Warn the user in
+  your final report: the very first deploy pauses once with instructions to
+  flip the GitHub package to Public (one click), then re-run.
+
+## Step 1 — fetch the kit from GitHub into this project
+
+```bash
+git clone --depth 1 https://github.com/TamanyMamAbdullah/branch-preview-deploy.git /tmp/bpd-kit
+cp -r /tmp/bpd-kit/.deploy ./.deploy
+rm -rf /tmp/bpd-kit
+bash .deploy/install.sh
+```
+
+(On Windows, run these in Git Bash. `install.sh` creating
+`.github/workflows/deploy.yml` and `.deploy/config.yml` is expected.)
+
+## Step 2 — hard rules (they apply to everything you do from here)
+
+1. **The project's own files are READ-ONLY.** Never modify, create, delete,
+   or reformat anything outside `.deploy/`. Not package.json, not source
+   code, not an existing Dockerfile, not `.env*` files. The one exception is
+   the workflow file `install.sh` just created.
+2. **Inside `.deploy/` you may edit ONLY `config.yml`**, and if truly needed
+   create ONE new file, `.deploy/Dockerfile.app`. Never touch `run.sh`,
+   `lib/`, `steps/`, `engines/`, `presets/`, or the workflow files.
+3. **Never write a secret VALUE anywhere** — not in config, not in files,
+   not in your final message. The config takes secret NAMES only.
+4. If a correct setup would require changing a project file (e.g. an nginx
+   config that listens on IPv4 only — Railway health-checks over IPv6), do
+   NOT change it. Put the exact file, line, and reason into your final
+   report instead.
+
+## Step 3 — configure
+
+Read `.deploy/docs/AI-SETUP-PROMPT.md` (now inside this project) and follow
+its steps 2–5 exactly. In short: study the project read-only (framework,
+build/start scripts, real port, health path, env variables with no defaults,
+database engine + connection variable + migrations); pick the Dockerfile in
+this order — existing production Dockerfile → the shipped frontend preset
+(`.deploy/presets/frontend-static.Dockerfile`) for static frontends → write
+`.deploy/Dockerfile.app` for backends; then fill `.deploy/config.yml` fully
+(the ★-marked lines). Two overrides on that doc:
+
+- `build.registry_visibility` comes from the user's Step-0 answer — Pro =
+  `private` for frontend AND backend, Free = `public`.
+- Your final report must end with the table defined in Step 5 below.
+
+## Step 4 — verify before reporting
+
+- `bash .deploy/run.sh validate` must pass. Missing-secret errors are
+  expected locally — prove the rest passes with throwaway values, e.g.
+  `JWT_SECRET=x bash .deploy/run.sh validate`.
+- `bash .deploy/selftest.sh` must pass.
+- If you created `.deploy/Dockerfile.app` and docker is available, check
+  that it builds.
+
+Fix the config until all of that is green. Do not report success otherwise.
+
+## Step 5 — final report (write it for a non-expert)
+
+1. Two or three sentences: what you configured and why (frontend or backend,
+   which Dockerfile, which database, private or public image).
+2. Any one-line project change you were not allowed to make (file, exact
+   line, one-sentence reason).
+3. **The keys table.** List ONLY the rows that apply to this project, plus
+   one row for every name you put under `env.secrets` in the config. Keep
+   the "Where to get it" and "How" columns filled in:
+
+   | Key to add | Needed? | Where to get it | How |
+   |---|---|---|---|
+   | `RAILWAY_API_TOKEN` | Always | railway.com/account/tokens | Create a token scoped to your **account** (a project token cannot create environments and will fail). Copy the value immediately — it is shown only once. |
+   | `GHCR_PULL_TOKEN` | Only when the image is private (Railway Pro) | github.com/settings/tokens → "Generate new token (classic)" | Tick **only** the `read:packages` box. Expiration: "No expiration". Copy immediately. One token works for **every** repo you own — if the team already has one, reuse it. |
+   | `SEED_S3_ACCESS_KEY_ID` + `SEED_S3_SECRET_ACCESS_KEY` | Only when restoring a database dump from S3 | Your storage provider's console (AWS IAM, Cloudflare R2, Backblaze…) | Create a **read-only** access key for the dump's bucket. |
+   | *(each `env.secrets` name)* | Always for this project | *(say where this app's value comes from — e.g. the Stripe dashboard for `STRIPE_API_KEY`, or "invent a long random string" for a `JWT_SECRET`)* | *(one sentence)* |
+
+   Then tell the user where every value gets pasted: the GitHub repository →
+   **Settings → Secrets and variables → Actions → New repository secret** —
+   the name must match the table exactly, capitals and underscores included.
+   Click-by-click guide: `.deploy/docs/SECRETS.md`.
+
+4. The launch steps: commit and push, then GitHub → **Actions** → **"Deploy
+   branch"** → pick the branch → **Run workflow**. The live URL appears at
+   the top of the run's summary page.
+5. Optional hardening: after the first deploy, the run prints the Railway
+   project id — pasting it into `railway.project_id` in `.deploy/config.yml`
+   pins the project. Later deploys and cleanups already find it by name
+   automatically; the pin just also survives a project rename.
+````
+
+</details>
+
+Prefer to set things up by hand instead? The two manual paths are below.
+
+---
+
 ## Action mode — the 3-step setup
 
 ```
@@ -77,7 +205,9 @@ db:
 ```
 
 Then upload the dump once: `cp dump.archive.gz .deploy/dumps/ && bash
-.deploy/upload-dump.sh` (needs the two `SEED_S3_*` secrets — see below).
+.deploy/upload-dump.sh` (first `export` the two `SEED_S3_*` values in your
+terminal, using a key that can **write** to the bucket — the GitHub secrets
+below only need read).
 In action mode there is no `.deploy/` folder in your repo — clone this kit
 next to your project once and run its `upload-dump.sh` from your project's
 root, or upload the dump to your bucket any way you like; only
@@ -127,7 +257,9 @@ Between build and provision sits a **smoke test**: the freshly built image is
 booted on the CI runner itself and must answer the health path — on the right
 port, over IPv6 too — before anything is created on Railway. A misconfigured
 port or a crash at startup fails in seconds with exact instructions, not
-after a five-minute platform timeout.
+after a five-minute platform timeout. By default it runs when there is no
+database, since the app must boot standalone (`build.smoke_test: auto`);
+set it to `true` to run it always.
 
 ---
 
@@ -242,7 +374,7 @@ templates/deploy.yml       ← the ONE file an action-mode project pastes in
   lib/                     ← logging, config, secrets, the Railway API
   steps/                   ← the pipeline, one file per stage
   engines/                 ← mongo / postgres / none database drivers
-  workflow/deploy.yml      ← the generic workflow (source of truth, folder mode)
+  workflow/                ← deploy.yml + cleanup.yml (source of truth, folder mode)
   dumps/                   ← put local dumps here (git-ignored)
   docs/                    ← usage guide + new-project walkthrough
 ```
@@ -300,4 +432,5 @@ their logger starts, so **read the first lines of the runtime log first.**
 
 - **[`.deploy/docs/README.md`](.deploy/docs/README.md)** — day-to-day usage
 - **[`.deploy/docs/COPY-TO-NEW-PROJECT.md`](.deploy/docs/COPY-TO-NEW-PROJECT.md)** — new-project walkthrough with checklist
+- **[`.deploy/docs/AI-SETUP-PROMPT.md`](.deploy/docs/AI-SETUP-PROMPT.md)** — the AI setup guide that travels inside `.deploy/`; the copy-paste prompt at the top of this README fetches the kit first and then follows it
 - **[`.deploy/dumps/README.md`](.deploy/dumps/README.md)** — why dumps live in object storage, not git

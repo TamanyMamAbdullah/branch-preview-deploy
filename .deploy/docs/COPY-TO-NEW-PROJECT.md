@@ -64,9 +64,10 @@ db:
 
 - **`project.name`** — empty means "use the repo's name". Set it only if you
   want a different one. Lowercase, digits, dashes, under ~20 characters.
-- **`railway.project_id`** — leave empty: the first deploy creates a Railway
-  project and prints its id. **Paste that id back in**, or every deploy makes
-  another new project.
+- **`railway.project_id`** — leave empty: deploys (and cleanups) find the
+  project by its name and reuse it, creating it only the first time. Pasting
+  the printed id back in is optional — it pins the project so a rename can't
+  break the link.
 - **`runtime.health_check_path`** — the *literal* path returning 200.
   `/health` by default; the frontend preset serves it. Wrong value = deploys
   hang until timeout.

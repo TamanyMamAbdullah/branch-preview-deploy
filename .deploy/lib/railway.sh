@@ -155,6 +155,17 @@ rw_project_exists() {            # rw_project_exists <projectId>
     | jq -e '.project.id' >/dev/null 2>&1
 }
 
+# rw_project_find_by_name <name> — every project this token can see with that
+# exact name, one id per line. Lets a run whose config has no project_id find
+# the project a previous run created instead of creating another one — and
+# lets automatic cleanup find it too. Best-effort: an API error returns
+# nothing and the caller falls back to its old behaviour.
+rw_project_find_by_name() {
+  rw_gql 'query{ projects(first:100){ edges{ node{ id name } } } }' 2>/dev/null \
+    | jq -r --arg n "$1" '.projects.edges[]?.node | select(.name==$n) | .id' || true
+  return 0
+}
+
 # Projects belong to a workspace. Most accounts have exactly one, so it is
 # auto-detected rather than made another thing to configure. Detection is
 # BEST-EFFORT and never fails the run: the API has carried both `workspaces`

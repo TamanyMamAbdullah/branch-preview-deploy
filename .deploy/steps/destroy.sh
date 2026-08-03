@@ -30,9 +30,27 @@ Remove it from config.yml if you really mean to, and think twice."
   local project_id env_id
   project_id="$(cfg '.railway.project_id' '')"
   if [[ -z "$project_id" ]]; then
-    log_warn "railway.project_id is empty — there is no project to look in"
-    summary "- Nothing to destroy: \`railway.project_id\` is not set in \`.deploy/config.yml\`"
-    group_end; return 0
+    # No pinned id — find the project by name, the same way deploy does. This
+    # matters most for the automatic PR-close/branch-delete cleanup: it must
+    # work even when nobody ever pasted the id back into config.yml.
+    local pname found matches
+    pname="$(cfg '.railway.project_name' '')"
+    [[ -z "$pname" ]] && pname="$PROJECT_NAME"
+    found="$(rw_project_find_by_name "$pname")"
+    matches="$(printf '%s\n' "$found" | grep -c . || true)"
+    if (( matches == 1 )); then
+      project_id="$found"
+      log_info "railway.project_id is empty — using project '$pname' ($project_id), found by name"
+    elif (( matches > 1 )); then
+      log_err "this account has $matches projects named '$pname' — destroy refuses to guess."
+      log_err "Set railway.project_id in .deploy/config.yml to one of:"
+      printf '%s\n' "$found" | sed 's/^/      /' >&2
+      die "railway.project_id is required when several projects share a name"
+    else
+      log_warn "railway.project_id is empty and no project named '$pname' exists — nothing to destroy"
+      summary "- Nothing to destroy: no \`railway.project_id\` set and no project named \`$pname\` found"
+      group_end; return 0
+    fi
   fi
 
   rw_project_exists "$project_id" \
