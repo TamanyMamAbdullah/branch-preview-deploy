@@ -38,10 +38,11 @@ Check the id, and that the token belongs to the same account or team."
       log_info "optional: pin it with railway.project_id in config.yml (skips this"
       log_info "lookup and survives a project rename)"
     elif (( matches > 1 )); then
-      log_err "this account has $matches projects named '$pname' — the right one cannot"
-      log_err "be guessed. Set railway.project_id in .deploy/config.yml to one of:"
-      printf '%s\n' "$found" | sed 's/^/      /' >&2
-      die "railway.project_id is required when several projects share a name"
+      # See the note in steps/destroy.sh: the ids belong INSIDE the die message,
+      # because die closes the collapsed group before printing.
+      die "this account has $matches live projects named '$pname' — the right one
+cannot be guessed. Set railway.project_id in your config to one of these:
+$(printf '%s\n' "$found" | sed 's/^/      /')"
     else
       # A project must belong to a workspace. Auto-detect when there is only one,
       # so this isn't another value to look up and paste in. Detection is

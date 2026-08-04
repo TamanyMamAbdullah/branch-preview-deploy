@@ -42,10 +42,13 @@ Remove it from config.yml if you really mean to, and think twice."
       project_id="$found"
       log_info "railway.project_id is empty — using project '$pname' ($project_id), found by name"
     elif (( matches > 1 )); then
-      log_err "this account has $matches projects named '$pname' — destroy refuses to guess."
-      log_err "Set railway.project_id in .deploy/config.yml to one of:"
-      printf '%s\n' "$found" | sed 's/^/      /' >&2
-      die "railway.project_id is required when several projects share a name"
+      # Part of the die message, not separate log lines: die closes the open
+      # group first, so this stays readable without expanding anything. As
+      # separate lines the list of ids stayed hidden inside the collapsed
+      # group — the one piece of information needed to fix the problem.
+      die "this account has $matches live projects named '$pname' — destroy refuses to guess.
+Set railway.project_id in your config to whichever of these is the right one:
+$(printf '%s\n' "$found" | sed 's/^/      /')"
     else
       log_warn "railway.project_id is empty and no project named '$pname' exists — nothing to destroy"
       summary "- Nothing to destroy: no \`railway.project_id\` set and no project named \`$pname\` found"

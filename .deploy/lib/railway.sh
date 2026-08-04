@@ -155,14 +155,34 @@ rw_project_exists() {            # rw_project_exists <projectId>
     | jq -e '.project.id' >/dev/null 2>&1
 }
 
-# rw_project_find_by_name <name> — every project this token can see with that
-# exact name, one id per line. Lets a run whose config has no project_id find
-# the project a previous run created instead of creating another one — and
-# lets automatic cleanup find it too. Best-effort: an API error returns
+# rw_project_find_by_name <name> — every LIVE project this token can see with
+# that exact name, one id per line. Lets a run whose config has no project_id
+# find the project a previous run created instead of creating another one —
+# and lets automatic cleanup find it too. Best-effort: an API error returns
 # nothing and the caller falls back to its old behaviour.
+#
+# DELETED projects still come back from this query. Railway keeps a deleted
+# project recoverable for a grace period — the dashboard shows it under
+# "N Deleted" with "Removed in 1d" — and the API lists it exactly like a live
+# one, just with deletedAt set. Without this filter a single real project plus
+# one in the trash counts as two, and both provision and destroy then refuse to
+# guess between a project that exists and one that is on its way out. Reported
+# from a real run, not from code review.
+#
+# The schema check matters: asking for a field the API does not have makes the
+# WHOLE query fail, which would return nothing — and "no project found" sends
+# provision off to create a duplicate. So only ask when the field is really
+# there. The jq filter is written to be correct either way.
 rw_project_find_by_name() {
-  rw_gql 'query{ projects(first:100){ edges{ node{ id name } } } }' 2>/dev/null \
-    | jq -r --arg n "$1" '.projects.edges[]?.node | select(.name==$n) | .id' || true
+  local q='query{ projects(first:100){ edges{ node{ id name } } } }'
+  rw_obj_has_field Project deletedAt \
+    && q='query{ projects(first:100){ edges{ node{ id name deletedAt } } } }'
+
+  rw_gql "$q" 2>/dev/null \
+    | jq -r --arg n "$1" '.projects.edges[]?.node
+                          | select(.name == $n)
+                          | select((.deletedAt // null) == null)
+                          | .id' || true
   return 0
 }
 
