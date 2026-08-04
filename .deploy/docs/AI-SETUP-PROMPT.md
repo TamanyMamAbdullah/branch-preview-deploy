@@ -35,6 +35,67 @@ Do not redesign it, do not "improve" it.
 
 ## Steps
 
+**0. Ask the user first.** Two things cannot be read from the code. Ask both,
+wait for the answers, and start only once you have them.
+
+*Q1 — the plan:* "Is your Railway account on **Pro** or **Free/Hobby**?"
+Pro → `build.registry_visibility: private` (needs the `GHCR_PULL_TOKEN`
+secret). Free → `public`, and warn them the first deploy pauses once to have
+the GitHub package flipped to Public.
+
+*Q2 — the database:* "Every preview branch gets its own throwaway database,
+created fresh and deleted with the preview. Do you want **A — none** (no
+database, or the app uses one that already exists elsewhere), **B — empty**
+(its own database, starting blank), or **C — loaded from an export** (same as
+B, plus a dump file restored into it on every deploy)?"
+
+- **A** → `db.engine: none`, and nothing else in the `db:` block matters.
+- **B** → set `db.engine`, `db.connection_env` (the EXACT variable the app
+  reads), `db.database_name`, `db.service_image`. Leave `restore.tool: none`.
+  No bucket and no keys are involved.
+- **C** → everything in B, plus Q3.
+
+These answers **beat anything you infer from the code.** A project that has a
+database in development may deliberately not want one cloned into previews.
+
+*Q3 — only for answer C.* Ask all three at once:
+1. Which database and which version made the export (e.g. "MongoDB 7")? The
+   preview's `db.service_image` must be that version or newer, or the restore
+   fails.
+2. How was the export made? The exact command if they have it, otherwise the
+   file name.
+3. Where does the file live — the full path including the file name, e.g.
+   `s3://my-bucket/seed.archive.gz`? And, if the bucket is not Amazon S3
+   (Cloudflare R2, IDrive e2, Backblaze B2, MinIO…), the endpoint URL from
+   that provider's dashboard.
+
+Map answer 2 onto `db.restore`:
+
+| How the export was made | `tool` | `format` | `gzip` |
+|---|---|---|---|
+| `mongodump --archive=x.gz --gzip` | `mongorestore` | `archive` | `true` |
+| `mongodump --archive=x` | `mongorestore` | `archive` | `false` |
+| `mongodump --out=folder/` (folder of `.bson`) | `mongorestore` | `directory` | `false` |
+| `pg_dump -Fc` (`.dump`, `.backup`) | `pg_restore` | `custom` | `false` |
+| `pg_dump -Fd` (a folder) | `pg_restore` | `directory` | `false` |
+| `pg_dump` plain `.sql` | `psql` | `plain` | `false` |
+| plain `.sql.gz` | `psql` | `plain` | `true` |
+
+`pg_dump -Fc` is compressed internally, so `gzip` stays `false`. Any other
+combination is unsupported — say so instead of guessing.
+
+Answer 3 sets `restore.seed_source` (the FULL path, file name included — the
+kit downloads one exact object and never searches the bucket) and
+`restore.s3_endpoint` for non-Amazon storage. An `s3://` source also means
+two extra secret rows in your final report: `SEED_S3_ACCESS_KEY_ID` and
+`SEED_S3_SECRET_ACCESS_KEY`, read-only keys for that bucket.
+
+Two things to tell them for answer C: if the database name inside the export
+differs from `db.database_name`, Mongo needs
+`extra_args: ["--nsFrom=old.*", "--nsTo=new.*"]`; and a dump taken straight
+from production puts real customer data into previews that anyone with the
+link can open — recommend a small scrubbed dump instead.
+
 **1. Install.** Run `bash .deploy/install.sh` once.
 
 **2. Study the project (read-only).** Establish, from the actual code, not
@@ -75,12 +136,10 @@ vary; recipes are at the top of the file. Get these right:
    - `runtime.health_check_path` — a path that truly returns 200, checked
      against where it sits relative to any base path. For an SPA, `/` works.
    - `runtime.base_path` or `base_path_env` if routes sit behind a prefix.
-   - Backends with a database: `db.engine`, `db.connection_env` (the EXACT
-     variable the app reads), `db.database_name`, a `db.service_image`
-     version matching what the project uses, and `db.migrate.command` if the
-     project has migrations (e.g. `npx prisma migrate deploy`). Leave
-     restore/seed settings alone unless the project has a dump workflow.
-     Never list `db.connection_env` under `env.secrets` — it is provisioned.
+   - The whole `db:` block comes from the user's step-0 answers, not from the
+     code. Add `db.migrate.command` if the project has migrations (e.g. `npx
+     prisma migrate deploy`). Never list `db.connection_env` under
+     `env.secrets` — the machinery provisions it.
    - `env.static` for plain values every stage needs (e.g. `NODE_ENV:
      production`). `env.secrets` = the NAMES of variables that are required
      but secret (the env schema's no-default entries are your list).
@@ -100,7 +159,9 @@ prove the rest passes with throwaway env values, e.g.
       Settings → Secrets and variables → Actions; full walkthrough exists at
       `.deploy/docs/SECRETS.md`. `RAILWAY_API_TOKEN` is always needed
       (an ACCOUNT token). `GHCR_PULL_TOKEN` only if you set
-      `registry_visibility: private`.
+      `registry_visibility: private`. `SEED_S3_ACCESS_KEY_ID` and
+      `SEED_S3_SECRET_ACCESS_KEY` only if the database is seeded from an
+      `s3://` export — read-only keys for that bucket.
    3. Any one-line project change you were not allowed to make (file, exact
       line, one-sentence reason).
    4. Commit and push, then: GitHub → Actions → "Deploy branch" → pick the

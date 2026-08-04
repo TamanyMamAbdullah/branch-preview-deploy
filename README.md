@@ -42,7 +42,12 @@ Kit home: https://github.com/TamanyMamAbdullah/branch-preview-deploy.git
 Your ONLY job is to install and configure the kit for this project. Do not
 redesign it, do not "improve" it, do not edit its machinery.
 
-## Step 0 — ask the user ONE question before touching anything
+## Step 0 — ask the user these questions before touching anything
+
+Ask them together, wait for the answers, and do not start until you have them.
+Nothing below can be guessed from the code.
+
+### Q1 — the Railway plan
 
 > Is your Railway account on the **Pro** plan or the **Free/Hobby** plan?
 > (Not sure? Check railway.com → your avatar → Account Settings → Plans.)
@@ -54,6 +59,91 @@ redesign it, do not "improve" it, do not edit its machinery.
 - **Free/Hobby** → set `build.registry_visibility: public`. Warn the user in
   your final report: the very first deploy pauses once with instructions to
   flip the GitHub package to Public (one click), then re-run.
+
+### Q2 — the database
+
+> Every preview branch gets its own throwaway database, created fresh and
+> deleted with the preview. Which do you want?
+>
+> **A — None.** The app has no database, or it talks to one that already
+> exists elsewhere (you pass its connection string as a secret).
+> **B — Empty.** Give each preview its own database, but start it blank.
+> **C — Loaded from an export.** Same as B, plus load a dump file into it on
+> every deploy, so every preview starts with the same real data.
+
+Set the config from the answer:
+
+- **A** → `db.engine: none`. Skip the rest of this question.
+- **B** → set `db.engine`, `db.connection_env` (the EXACT variable the app
+  reads), `db.database_name`, and `db.service_image`. Leave
+  `db.restore.tool: none`. Nothing else is needed — no bucket, no keys.
+- **C** → everything in B, plus Q3 below.
+
+For A and B you are done with the database. Go to Step 1.
+
+### Q3 — only if the answer to Q2 was C
+
+Ask all three at once:
+
+> 1. **Which database, and which version made the export?** e.g. "MongoDB 7"
+>    or "PostgreSQL 16". I need the version because the preview's database
+>    must be the same or newer, or the restore fails.
+> 2. **How was the export made?** Paste the exact command if you have it —
+>    e.g. `mongodump --archive=dump.gz --gzip`, or `pg_dump -Fc`. If you only
+>    know the file name, tell me that (`dump.archive.gz`, `db.sql`, a folder…).
+> 3. **Where does the file live?** I need the full path, file name included —
+>    e.g. `s3://my-bucket/seed.archive.gz`. And if the bucket is NOT Amazon
+>    S3 (Cloudflare R2, IDrive e2, Backblaze B2, MinIO…), paste the endpoint
+>    URL from that provider's dashboard.
+
+Then fill `db.restore` from the answers. Answer 1 sets `db.service_image` to
+that version **or newer** (`mongo:8`, `postgres:16`). Answer 2 maps to the
+tool and format:
+
+| How the export was made | `tool` | `format` | `gzip` |
+|---|---|---|---|
+| `mongodump --archive=x.gz --gzip` | `mongorestore` | `archive` | `true` |
+| `mongodump --archive=x` | `mongorestore` | `archive` | `false` |
+| `mongodump --out=folder/` (folder of `.bson`) | `mongorestore` | `directory` | `false` |
+| `pg_dump -Fc` (`.dump`, `.backup`) | `pg_restore` | `custom` | `false` |
+| `pg_dump -Fd` (a folder) | `pg_restore` | `directory` | `false` |
+| `pg_dump` plain `.sql` | `psql` | `plain` | `false` |
+| plain `.sql.gz` | `psql` | `plain` | `true` |
+
+`pg_dump -Fc` is already compressed internally — leave `gzip: false` for it.
+Anything else is unsupported; say so rather than guessing.
+
+Answer 3 sets `seed_source` (the FULL path, file name included — a bare
+`s3://bucket/` is not enough; the kit never searches the bucket), plus
+`s3_endpoint` when it isn't Amazon. A finished block looks like:
+
+```yaml
+db:
+  engine: mongo
+  connection_env: DB_MONGO_URI
+  service_image: mongo:8
+  database_name: myapp
+  restore:
+    tool: mongorestore
+    format: archive
+    gzip: true
+    mode: always                # always = reload every deploy (reproducible)
+    seed_source: s3://my-bucket/seed.archive.gz
+    s3_endpoint: https://xxxx.idrivee2-yy.com   # omit entirely for Amazon S3
+    s3_region: us-east-1
+```
+
+Two more things you must do for answer C:
+
+- Add `SEED_S3_ACCESS_KEY_ID` and `SEED_S3_SECRET_ACCESS_KEY` as rows in your
+  final table (read-only keys for that bucket).
+- If the database name INSIDE the export differs from `db.database_name`, say
+  so in your report — for Mongo the fix is
+  `extra_args: ["--nsFrom=old.*", "--nsTo=new.*"]`.
+
+And warn them once, in plain words: a dump taken straight from production
+puts real customer data into preview environments that anyone with the link
+can open. Recommend a small scrubbed dump instead.
 
 ## Step 1 — fetch the kit from GitHub into this project
 
@@ -92,10 +182,13 @@ database engine + connection variable + migrations); pick the Dockerfile in
 this order — existing production Dockerfile → the shipped frontend preset
 (`.deploy/presets/frontend-static.Dockerfile`) for static frontends → write
 `.deploy/Dockerfile.app` for backends; then fill `.deploy/config.yml` fully
-(the ★-marked lines). Two overrides on that doc:
+(the ★-marked lines). Three overrides on that doc:
 
 - `build.registry_visibility` comes from the user's Step-0 answer — Pro =
   `private` for frontend AND backend, Free = `public`.
+- The whole `db:` block comes from the user's Q2/Q3 answers above. Those
+  answers win over anything you infer from the code — the project may well
+  have a database it does NOT want cloned into every preview.
 - Your final report must end with the table defined in Step 5 below.
 
 ## Step 4 — verify before reporting
