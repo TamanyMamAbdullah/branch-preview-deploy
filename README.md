@@ -159,10 +159,22 @@ tool and format:
 `pg_dump -Fc` is already compressed internally — leave `gzip: false` for it.
 Anything else is unsupported; say so rather than guessing.
 
-Answer 3 sets `bucket` and, for non-Amazon storage, `s3_endpoint`. Set
-**nothing else** about location — no `folder`, no `default_dump`, no
-`seed_source`. Leaving `default_dump` empty is what makes previews start empty,
-which is the behaviour we want. A finished block looks like:
+Answer 3 sets `bucket` and, for non-Amazon storage, `s3_endpoint`. Leave
+`default_dump` empty — that is what makes previews start empty, which is the
+behaviour we want.
+
+**Never set `seed_source`.** It is an escape hatch for a dump living outside
+the bucket, and it outranks everything else: with it set, the deploy button's
+dump box is read and then ignored, so the user types names into a box that
+silently does nothing. `bucket` is the default and the only thing to write.
+
+`folder` is the single exception. It defaults to `project.name`. If the objects
+already sit in a folder with a different name — check what the user actually
+has, never assume — set `folder` to that real name. A `project.name` of
+`vod-admin-api` will not find objects stored under `vod-api-admin-test/`, and
+the failure just looks like a missing dump.
+
+A finished block looks like:
 
 ```yaml
 db:

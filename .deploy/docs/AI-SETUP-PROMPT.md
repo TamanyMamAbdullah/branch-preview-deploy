@@ -130,11 +130,24 @@ Map answer 2 onto `db.restore`:
 combination is unsupported — say so instead of guessing.
 
 Answer 3 sets `restore.bucket`, plus `restore.s3_endpoint` for non-Amazon
-storage. Set **nothing else** about location — leave `folder`, `default_dump`
-and `seed_source` empty. An empty `default_dump` is exactly what makes previews
-start blank. Using a bucket also means two extra secret rows in your final
-report: `SEED_S3_ACCESS_KEY_ID` and `SEED_S3_SECRET_ACCESS_KEY`, read-only keys
-for that bucket.
+storage. Set **nothing else** about location — leave `default_dump` empty,
+which is exactly what makes previews start blank.
+
+**Never set `seed_source`.** It is an escape hatch for a dump that lives
+outside the bucket, and it takes priority over everything: with it set, the
+deploy button's dump box is read but ignored, and the user is left typing names
+into a box that silently does nothing. `bucket` is the default and the only
+thing you should write.
+
+`folder` is the one exception to "set nothing else". It defaults to
+`project.name`. If the objects already sit in a folder whose name is different
+— check what the user actually has, do not assume — set `folder` to that real
+name. A `project.name` of `vod-admin-api` will not find objects stored under
+`vod-api-admin-test/`, and the failure looks like a missing dump.
+
+Using a bucket also means two extra secret rows in your final report:
+`SEED_S3_ACCESS_KEY_ID` and `SEED_S3_SECRET_ACCESS_KEY`, read-only keys for
+that bucket.
 
 Your final report must then tell them, filled in with the real bucket and real
 project name, not as a template:
