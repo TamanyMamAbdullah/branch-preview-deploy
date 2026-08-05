@@ -14,6 +14,13 @@ step_validate() {
   PROBLEMS=()
   _problem() { log_err "$*"; PROBLEMS+=("$*"); errors=$((errors + 1)); }
 
+  # Set when any required secret is missing, so the run can end by listing the
+  # secret NAMES that did arrive. "Not set" has several very different causes —
+  # added as a Variable, added to an Environment, added to the wrong repo,
+  # an org secret not shared with this repo, a typo — and they are impossible
+  # to tell apart from the outside. The list separates them in one glance.
+  local secret_trouble=0
+
   # These ALWAYS return 0 on purpose. run.sh runs under `set -e`, so a helper
   # that returned non-zero would abort the whole run at the first bad value —
   # you'd fix one thing, re-run, and be told about the next. The point of this
@@ -79,13 +86,13 @@ step_validate() {
 
   if [[ "$(cfg '.build.registry_visibility' 'public')" == "private" ]]; then
     local rpe; rpe="$(cfg '.build.registry_password_env' 'GHCR_PULL_TOKEN')"
-    secret_has "$rpe" || _problem "build.registry_visibility is 'private', but the secret '$rpe' is not set.
+    secret_has "$rpe" || { secret_trouble=1; _problem "build.registry_visibility is 'private', but the secret '$rpe' is not set.
       Railway needs it to pull the locked image. Create YOUR OWN GitHub token
       (classic) with the read:packages scope at github.com/settings/tokens and
       add it as that repo secret. Under an organization it also needs read
       access to the package, the org must allow classic tokens, and — if the
       org uses single sign-on — the token must be authorized for the org.
-      Click-by-click: .deploy/docs/SECRETS.md"
+      Click-by-click: .deploy/docs/SECRETS.md"; }
 
     # An empty username falls back to the repository's owner. That is correct on
     # a personal repo and wrong on an organization, where the owner is the ORG
@@ -169,6 +176,7 @@ step_validate() {
   done < <(cfg_list '.env.secrets')
 
   if ((${#missing[@]})); then
+    secret_trouble=1
     _problem "these secrets are named in config.yml but are not set:"
     for m in "${missing[@]}"; do log "      • $m"; PROBLEMS+=("    • $m"); done
 
@@ -188,6 +196,32 @@ step_validate() {
   local conn; conn="$(cfg '.db.connection_env' '')"
   if [[ -n "$conn" ]] && cfg_json '.env.static' | jq -e --arg k "$conn" 'has($k)' >/dev/null 2>&1; then
     _problem "env.static sets $conn, but the machinery provisions that itself. Remove it."
+  fi
+
+  # NAMES only, never values — this is what turns "not set" into an answer.
+  if (( secret_trouble )); then
+    local seen=() s
+    while IFS= read -r s; do
+      [[ -z "$s" || "$s" == "github_token" ]] && continue
+      seen+=("$s")
+    done < <(secret_names)
+
+    log "    ── secrets this run CAN see (names only) ─────────────────────────"
+    if ((${#seen[@]})); then
+      for s in "${seen[@]}"; do log "      • $s"; done
+      log "    A name missing from that list was never delivered to the run."
+      log "    Check, in this order:"
+      log "      1. It is under Secrets, not the Variables tab beside it."
+      log "      2. It is a REPOSITORY secret, not an Environment secret —"
+      log "         environment secrets only reach jobs that name that environment."
+      log "      3. It is on THIS repository (or an org secret whose repository"
+      log "         access includes this one)."
+      log "      4. The name matches exactly — capitals, underscores, no spaces."
+    else
+      log "      (none)"
+      log "    Not even one secret arrived, so this is the workflow, not the"
+      log "    secret. The caller workflow needs 'secrets: inherit'."
+    fi
   fi
   group_end
 
