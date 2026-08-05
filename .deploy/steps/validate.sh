@@ -80,9 +80,23 @@ step_validate() {
   if [[ "$(cfg '.build.registry_visibility' 'public')" == "private" ]]; then
     local rpe; rpe="$(cfg '.build.registry_password_env' 'GHCR_PULL_TOKEN')"
     secret_has "$rpe" || _problem "build.registry_visibility is 'private', but the secret '$rpe' is not set.
-      Railway needs it to pull the locked image. Create a GitHub token (classic)
-      with the read:packages scope at github.com/settings/tokens and add it as
-      that repo secret — the same token works in every repo you own."
+      Railway needs it to pull the locked image. Create YOUR OWN GitHub token
+      (classic) with the read:packages scope at github.com/settings/tokens and
+      add it as that repo secret. Under an organization it also needs read
+      access to the package, the org must allow classic tokens, and — if the
+      org uses single sign-on — the token must be authorized for the org.
+      Click-by-click: .deploy/docs/SECRETS.md"
+
+    # An empty username falls back to the repository's owner. That is correct on
+    # a personal repo and wrong on an organization, where the owner is the ORG
+    # name — never an account that owns a token. A warning, not a failure: config
+    # alone cannot tell the two apart, and the registry often ignores the
+    # username when the token itself is valid.
+    if [[ -z "$(cfg '.build.registry_username' '')" ]]; then
+      log_warn "build.registry_username is empty — the repository's owner will be used."
+      log_warn "On an organization that is the ORG's name, not the account whose token"
+      log_warn "sits in '$rpe'. Set it to that account's GitHub username."
+    fi
   fi
 
   # --- runtime ------------------------------------------------------------------

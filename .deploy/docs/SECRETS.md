@@ -29,8 +29,9 @@ missing secret, before anything is created.
 ## Part 2 — Get the GitHub image key (`GHCR_PULL_TOKEN`)
 
 Skip this part if `config.yml` says `registry_visibility: public`.
-If someone on the team already made this token, **reuse it** — the same
-token works in every repository. Don't create a new one per project.
+
+**Make your own token.** Do not borrow a teammate's, and do not hand yours
+out. Part 4 explains why, and what an organization has to allow first.
 
 1. Open **github.com/settings/tokens**.
 2. **Generate new token** → **Generate new token (classic)**.
@@ -39,6 +40,10 @@ token works in every repository. Don't create a new one per project.
    fail on that date until someone creates a new one.)
 5. Tick **only** the `read:packages` box. Nothing else.
 6. **Generate token** and **copy the value now** — shown only once.
+
+That one box is the whole power of this key: it can download private
+container images, and nothing else. It cannot read your source code, push
+commits, or change any setting.
 
 ## Part 3 — Paste them into the repository
 
@@ -53,16 +58,90 @@ You should now see the names listed; the values stay hidden forever — normal.
 
 ---
 
-## For teams and organizations
+## Part 4 — Organizations
 
-- **Add secrets once for the whole org** instead of per repo:
-  org **Settings → Secrets and variables → Actions → New organization
-  secret**, shared with all repositories. Every project's deploy finds them
-  automatically.
-- If the org uses **SAML single sign-on**, open the classic token's page and
-  click **Authorize** for the org — without that, the token is rejected there.
-- The GitHub token dies with the account that created it. If that person
-  leaves, deploys stop — for a company, create it from a shared/bot account.
+Read this if the repository lives under a GitHub **organization** rather than
+your personal account. Things work differently there, and the difference is
+easy to miss.
+
+### One token per person — never one for the team
+
+Everyone sets up their own projects with **their own** token, pasted as a
+**repository** secret in each project they set up. Do not create an
+organization-wide `GHCR_PULL_TOKEN`. Do not pass your token to a teammate.
+
+Three reasons:
+
+- A shared token makes every deploy authenticate as one person. Anything
+  logged, revoked, or misused points at them, for work they never did.
+- A shared token is one point of failure. It expires or gets revoked once, and
+  every project in the organization stops the same morning.
+- Your own token keeps trouble inside your own project, and makes it obvious
+  who to ask when something breaks.
+
+To be clear, because it sounds like a contradiction: one token *can* read
+every package its account is allowed to read, so one would technically work
+everywhere. The rule here is about who is answerable for a deploy, not about
+what is possible.
+
+The cost, said plainly: a token dies with the account that made it. When
+someone leaves, the projects **they** set up stop deploying, and the person
+taking over adds their own token and their own username. That is a small,
+contained cost — not a reason to share one key.
+
+Other secrets are a different matter. `RAILWAY_API_TOKEN` and the `SEED_S3_*`
+keys are team resources and are fine as organization secrets
+(org **Settings → Secrets and variables → Actions → New organization
+secret**). `GHCR_PULL_TOKEN` is the one that stays personal.
+
+### Three things must be true, or the token cannot pull
+
+1. **Your account can read the package.** Being an organization member with
+   read access to the repository is normally enough. If it isn't, an owner
+   opens the package → **Package settings → Manage access** and adds you with
+   the **Read** role.
+2. **The organization allows classic tokens.** Some block them. Check
+   organization **Settings → Third-party Access**, under **Personal access
+   tokens**.
+3. **Single sign-on is authorized — if the organization uses it.** On
+   **github.com/settings/tokens**, look next to your token for a **Configure
+   SSO** button. If it is there, click it and authorize your organization.
+   No button means the organization has no single sign-on, and there is
+   nothing to do.
+
+### Also set your username in the config
+
+With `registry_visibility: private`, put the GitHub username of whoever made
+the token into `.deploy/config.yml`:
+
+```yaml
+build:
+  registry_visibility: private
+  registry_username: "<your-github-username>"
+```
+
+Left empty, it falls back to the repository's owner — which on an organization
+is the **organization's** name, not an account that owns a token. Filling it in
+removes the guess from the one place that is hardest to debug later.
+
+### Check the token before you trust it
+
+```bash
+docker login ghcr.io -u <your-github-username> -p <your-token>
+docker pull ghcr.io/<org>/<repo>:<a-tag-that-exists>
+```
+
+The **pull** is the real test — logging in succeeds far more easily than
+pulling does. A `denied` here means point 1 above.
+
+### Public images need an owner on an organization
+
+With `registry_visibility: public`, GitHub still publishes the package as
+private on the first push, and an ordinary member usually cannot change that.
+An organization owner opens
+`https://github.com/<org>/<repo>/pkgs/container/<package>` → **Package
+settings → Danger Zone → Change visibility → Public**. The organization may
+first have to allow public packages at all, under its **Settings → Packages**.
 
 ## If something complains
 
@@ -71,4 +150,5 @@ You should now see the names listed; the values stay hidden forever — normal.
 - **Railway says not authorized** — the token is a *project* token, expired,
   or pasted with a stray space. Make an **account** token and re-add it.
 - **Railway cannot pull the image** — `GHCR_PULL_TOKEN` is missing,
-  expired, or lacks the `read:packages` scope.
+  expired, or lacks the `read:packages` scope. On an organization, work
+  through the three points in Part 4 as well.

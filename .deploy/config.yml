@@ -107,12 +107,21 @@ build:
   #             code is downloadable by anyone who looks.
   #   private = nobody but you and Railway. Needs Railway Pro. The image stays
   #             locked; the pipeline hands Railway a pull token automatically.
-  #             Create ONE GitHub token (classic) with the read:packages scope
-  #             at github.com/settings/tokens and add it as the repo secret
-  #             named below — the SAME token works in every repo you own.
+  #             Create YOUR OWN GitHub token (classic) with the read:packages
+  #             scope at github.com/settings/tokens and add it as the repo
+  #             secret named below. Under an ORGANIZATION: use your own token,
+  #             not a teammate's, and fill in registry_username. Full guide,
+  #             including what an org has to allow: .deploy/docs/SECRETS.md
+  #
+  # An organization on the free plan has one more catch: it publishes the
+  # package private, and an ordinary member usually cannot make it public —
+  # an organization owner has to.
   registry_visibility: public
   registry_password_env: GHCR_PULL_TOKEN   # secret holding that token
-  registry_username: ""                    # empty = the repository's owner
+  # Empty = the repository's owner. Right on a personal repo; on an
+  # organization that is the ORG's name, so put the GitHub username of
+  # whoever made the token above.
+  registry_username: ""
 
 runtime:
   # The path that returns 200. ${TOKENS} are allowed. Check whether it sits

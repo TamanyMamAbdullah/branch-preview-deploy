@@ -47,20 +47,52 @@ redesign it, do not "improve" it, do not edit its machinery.
 Ask them together, wait for the answers, and do not start until you have them.
 Nothing below can be guessed from the code.
 
-### Q1 — the Railway plan
+### Q1 — where this repository lives
+
+> Is this repository under a **GitHub organization**, or under your
+> **personal** account?
+
+Ask this one first: it changes the answer to Q2. If they say organization,
+ask one more thing:
+
+> What is **your own** GitHub username? You will make your own
+> `GHCR_PULL_TOKEN` for this project — do not reuse a teammate's token, and do
+> not put the organization's name here.
+
+Write that username **verbatim** into `build.registry_username`. Never invent
+one. Never copy one from an example, from another project's config, or from
+anything you read in the kit's own docs or git history. Never fall back to the
+organization name. If the answer is missing or unclear, ask again instead of
+guessing. On a personal repo leave `build.registry_username` empty — the owner
+name is already correct there.
+
+### Q2 — the Railway plan
 
 > Is your Railway account on the **Pro** plan or the **Free/Hobby** plan?
 > (Not sure? Check railway.com → your avatar → Account Settings → Plans.)
 
-- **Pro** → later you will set `build.registry_visibility: private` in the
-  config — for BOTH frontend and backend projects. The built Docker image
-  stays locked on GitHub; nobody can ever download it. This requires the
-  `GHCR_PULL_TOKEN` secret (row 2 of the final table).
-- **Free/Hobby** → set `build.registry_visibility: public`. Warn the user in
-  your final report: the very first deploy pauses once with instructions to
-  flip the GitHub package to Public (one click), then re-run.
+Combine the answer with Q1:
 
-### Q2 — the database
+- **Personal + Pro** → set `build.registry_visibility: private` — for BOTH
+  frontend and backend projects. The built Docker image stays locked on
+  GitHub; nobody can ever download it. This requires the `GHCR_PULL_TOKEN`
+  secret (row 2 of the final table).
+- **Personal + Free/Hobby** → set `build.registry_visibility: public`. Warn
+  the user in your final report: the very first deploy pauses once with
+  instructions to flip the GitHub package to Public (one click), then re-run.
+- **Organization + Free/Hobby** → `public`, plus a warning that matters. An
+  organization publishes the image package **private**, and an ordinary member
+  usually cannot make it public. Say who has to act — an organization owner —
+  and exactly what they open:
+  `https://github.com/<org>/<repo>/pkgs/container/<package>` → Package
+  settings → Danger Zone → Change visibility → Public. The organization may
+  also have to allow public packages at all, under its Settings → Packages.
+- **Organization + Pro** → `private`, `build.registry_username` set to the
+  username from Q1, and the user's **own** token added as a **repository**
+  secret named `GHCR_PULL_TOKEN`. Do not suggest an organization-wide secret,
+  and do not suggest borrowing a teammate's token.
+
+### Q3 — the database
 
 > Every preview branch gets its own throwaway database, created fresh and
 > deleted with the preview. Which do you want?
@@ -78,11 +110,11 @@ Set the config from the answer:
 - **B** → set `db.engine`, `db.connection_env` (the EXACT variable the app
   reads), `db.database_name`, and `db.service_image`. Leave
   `db.restore.tool: none`. Nothing else is needed — no bucket, no keys.
-- **C** → everything in B, plus Q3 below.
+- **C** → everything in B, plus Q4 below.
 
 For A and B you are done with the database. Go to Step 1.
 
-### Q3 — only if the answer to Q2 was C
+### Q4 — only if the answer to Q3 was C
 
 **How dumps work here — understand this before you ask.** You never write a
 URL. One bucket holds the dumps for every project, and each project reads from
@@ -199,9 +231,11 @@ this order — existing production Dockerfile → the shipped frontend preset
 `.deploy/Dockerfile.app` for backends; then fill `.deploy/config.yml` fully
 (the ★-marked lines). Three overrides on that doc:
 
-- `build.registry_visibility` comes from the user's Step-0 answer — Pro =
-  `private` for frontend AND backend, Free = `public`.
-- The whole `db:` block comes from the user's Q2/Q3 answers above. Those
+- `build.registry_visibility` and `build.registry_username` come from the
+  user's Step-0 answers — Pro = `private` for frontend AND backend, Free =
+  `public`; and on an organization, `registry_username` is the username they
+  gave you in Q1.
+- The whole `db:` block comes from the user's Q3/Q4 answers above. Those
   answers win over anything you infer from the code — the project may well
   have a database it does NOT want cloned into every preview.
 - Your final report must end with the table defined in Step 5 below.
@@ -230,7 +264,7 @@ Fix the config until all of that is green. Do not report success otherwise.
    | Key to add | Needed? | Where to get it | How |
    |---|---|---|---|
    | `RAILWAY_API_TOKEN` | Always | railway.com/account/tokens | Create a token scoped to your **account** (a project token cannot create environments and will fail). Copy the value immediately — it is shown only once. |
-   | `GHCR_PULL_TOKEN` | Only when the image is private (Railway Pro) | github.com/settings/tokens → "Generate new token (classic)" | Tick **only** the `read:packages` box. Expiration: "No expiration". Copy immediately. One token works for **every** repo you own — if the team already has one, reuse it. |
+   | `GHCR_PULL_TOKEN` | Only when the image is private (Railway Pro) | github.com/settings/tokens → "Generate new token (classic)" | Tick **only** the `read:packages` box. Expiration: "No expiration". Copy immediately. Make **your own** — never reuse a teammate's, and never ask for an organization-wide secret. Under an organization, the account also needs read access to the package, the org must allow classic tokens, and single sign-on (if used) must be authorized for the token. Full guide: `.deploy/docs/SECRETS.md`. |
    | `SEED_S3_ACCESS_KEY_ID` + `SEED_S3_SECRET_ACCESS_KEY` | Only when restoring a database dump from S3 | Your storage provider's console (AWS IAM, Cloudflare R2, Backblaze…) | Create a **read-only** access key for the dump's bucket. |
    | *(each `env.secrets` name)* | Always for this project | *(say where this app's value comes from — e.g. the Stripe dashboard for `STRIPE_API_KEY`, or "invent a long random string" for a `JWT_SECRET`)* | *(one sentence)* |
 
@@ -239,7 +273,7 @@ Fix the config until all of that is green. Do not report success otherwise.
    the name must match the table exactly, capitals and underscores included.
    Click-by-click guide: `.deploy/docs/SECRETS.md`.
 
-4. **Where to put the dump — only if the Q2 answer was C.** Write this out
+4. **Where to put the dump — only if the Q3 answer was C.** Write this out
    filled in, not as a template. The user has to be able to follow it in
    their storage dashboard without asking you anything:
 
@@ -384,12 +418,20 @@ build:
   registry_visibility: private
 ```
 
-…and add one repo secret, `GHCR_PULL_TOKEN`: a GitHub token (classic) with
-the `read:packages` scope, from github.com/settings/tokens. The pipeline
-hands it to Railway automatically before every deploy. **The same token works
-in every repo you own** — create it once, reuse it everywhere. With this set
+…and add one repo secret, `GHCR_PULL_TOKEN`: **your own** GitHub token
+(classic) with the `read:packages` scope, from github.com/settings/tokens. The
+pipeline hands it to Railway automatically before every deploy. With this set
 there is no visibility click at all: nothing about your code is ever
 downloadable by anyone else.
+
+**Under a GitHub organization**, two more things. Set
+`build.registry_username` to the GitHub username of whoever made the token —
+left empty it falls back to the repository's owner, which there is the
+organization's name. And make your **own** token rather than sharing one:
+a shared token makes every deploy look like one person's, and breaks every
+project at once the day it expires.
+[`.deploy/docs/SECRETS.md`](.deploy/docs/SECRETS.md) has the full list of what
+an organization must allow first.
 
 ---
 
@@ -470,7 +512,7 @@ key and where to paste it, ~5 minutes.
 |---|---|---|
 | `RAILWAY_API_TOKEN` | always | An **account** token from railway.com/account/tokens. A *project* token can't create environments. |
 | `SEED_S3_ACCESS_KEY_ID` / `SEED_S3_SECRET_ACCESS_KEY` | only when seeding from S3 | **Read-only** key for the dump's bucket |
-| `GHCR_PULL_TOKEN` | only with `registry_visibility: private` | GitHub token (classic, `read:packages`) so Railway can pull the locked image. One token works for every repo you own. |
+| `GHCR_PULL_TOKEN` | only with `registry_visibility: private` | **Your own** GitHub token (classic, `read:packages`) so Railway can pull the locked image. Never a teammate's, never an organization-wide secret — see [`SECRETS.md`](.deploy/docs/SECRETS.md). |
 
 Plus whatever your `config.yml` names under `env.secrets` /
 `env.secrets_by_stage`. Adding one needs **no workflow edit** — name it in
@@ -579,7 +621,7 @@ their logger starts, so **read the first lines of the runtime log first.**
 |---|---|
 | Health check times out | The app crashed at startup — read the runtime log. Or it isn't listening on Railway's injected `PORT`, or bound to 127.0.0.1 instead of 0.0.0.0. |
 | "service unavailable" / 502 while the app runs fine | The app isn't listening where Railway knocks: its real port must equal `runtime.port`, and it must listen on IPv6 too (`[::]` — Railway probes and routes over IPv6). An nginx with only `listen 80;` needs `listen [::]:80;` added. |
-| `Railway cannot pull the image` | The GHCR package is private — make it public (one-time), or use Railway Pro with registry credentials. |
+| `Railway cannot pull the image` | The GHCR package is private — make it public (one-time), or use Railway Pro with registry credentials. Under an organization: an owner has to make it public, and a private image needs `registry_username` set plus a token that can read the package. |
 | `could not open a public port` | The Railway account isn't verified — connect GitHub to Railway. |
 | Restore fails | The dump is from a newer database version than `db.service_image`, or its database name differs from `db.database_name`. |
 | `secret X is not set` | Add it under Settings → Secrets and variables → Actions. |

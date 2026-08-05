@@ -104,7 +104,7 @@ runtime log.**
 |---|---|
 | Health check times out | The app crashed at startup — read the runtime log. Or it isn't listening on Railway's `PORT`. |
 | "service unavailable" / 502 while the app runs | The app listens on a different port than `runtime.port`, or only on IPv4 — Railway probes and routes over IPv6, so nginx needs `listen [::]:80;` next to `listen 80;`. |
-| `Railway cannot reach the image` | The GHCR package is private. Make it public, or use Railway Pro with registry credentials. |
+| `Railway cannot reach the image` | The GHCR package is private. Make it public, or use Railway Pro with registry credentials. Under an organization an owner has to make it public — and a private image needs `build.registry_username` set. See [`SECRETS.md`](SECRETS.md). |
 | `could not open a public port` | Railway account not verified — connect your GitHub account to Railway. |
 | Restore fails | Dump is from a newer database version than `db.service_image`, or the database name inside it differs from `db.database_name`. |
 | `secret X is not set` | Add it in Settings → Secrets and variables → Actions — full walkthrough in [`SECRETS.md`](SECRETS.md). |

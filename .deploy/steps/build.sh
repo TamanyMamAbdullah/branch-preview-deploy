@@ -120,7 +120,18 @@ step_build() {
     3. Danger Zone → Change visibility → Public
     4. Re-run this workflow
 
-  The image itself built and pushed fine — this is the last step before Railway."
+  The image itself built and pushed fine — this is the last step before Railway.
+
+  No 'Change visibility' button? Under an organization an ordinary member
+  usually cannot flip a package to public. Two ways out:
+
+    - Ask an organization owner to do steps 1-3. The org may first have to
+      allow public packages at all, under its Settings → Packages.
+    - Or, on Railway Pro, keep the image locked: set
+      build.registry_visibility: private in .deploy/config.yml, put your own
+      read:packages token in the $(cfg '.build.registry_password_env' 'GHCR_PULL_TOKEN') secret, and set
+      build.registry_username to your GitHub username.
+      Click-by-click: .deploy/docs/SECRETS.md"
     fi
   else
     log_info "registry_visibility is 'private' — the image stays locked; the deploy step"

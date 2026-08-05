@@ -86,6 +86,11 @@ db:
   the GitHub package to Public). On Railway Pro, set `private` and add the
   `GHCR_PULL_TOKEN` secret: the image stays locked, Railway logs in to pull
   it, and there is no visibility click at all.
+- **`build.registry_username`** — leave empty on a personal repo. Under a
+  GitHub **organization**, set it to the GitHub username of whoever made the
+  `GHCR_PULL_TOKEN`; empty falls back to the repository's owner, which there
+  is the organization's name. Organizations have two more catches — see
+  [`SECRETS.md`](SECRETS.md).
 - **`preview_defaults.env`** — where a preview differs from production. Put
   the throwaway storage bucket here, in plain sight, so anyone can confirm
   previews never touch production storage.
@@ -101,7 +106,7 @@ Short version: **Settings → Secrets and variables → Actions**
 |---|---|
 | `RAILWAY_API_TOKEN` | Always. An **account** token from railway.com/account/tokens — a *project* token can't create environments. |
 | `SEED_S3_ACCESS_KEY_ID` / `SEED_S3_SECRET_ACCESS_KEY` | Only when seeding a database from S3. Read-only key. |
-| `GHCR_PULL_TOKEN` | Only with `build.registry_visibility: private` (Railway Pro). A GitHub token (classic) with the `read:packages` scope — the same token works in every repo you own. |
+| `GHCR_PULL_TOKEN` | Only with `build.registry_visibility: private` (Railway Pro). **Your own** GitHub token (classic) with the `read:packages` scope — never a teammate's. Under an organization, read Part 4 of [`SECRETS.md`](SECRETS.md) first. |
 
 Plus every name from `env.secrets` / `env.secrets_by_stage`.
 
@@ -181,6 +186,8 @@ until you adjust. Nothing is changed or lost when that happens — compare your
 - [ ] `config.yml` adjusted (frontend: preset recipe; backend: `db:` block)
 - [ ] `RAILWAY_API_TOKEN` (an **account** token) added as a repo secret
 - [ ] Every `env.secrets` name added as a repo secret
+- [ ] Private image only: **your own** `GHCR_PULL_TOKEN` added — and under an
+      organization, `build.registry_username` set to your GitHub username
 - [ ] Seeding only: dump uploaded (`bash .deploy/upload-dump.sh`), `SEED_S3_*` secrets added, database image version ≥ the dump's
 - [ ] Health check path is the literal path returning 200
 - [ ] `bash .deploy/run.sh validate` passes

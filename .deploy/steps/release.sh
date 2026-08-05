@@ -78,10 +78,16 @@ step_deploy() {
     rpe="$(cfg '.build.registry_password_env' 'GHCR_PULL_TOKEN')"
     rpass="$(secret_get "$rpe")"
     [[ -z "$rpass" ]] && die "secret '$rpe' is not set — Railway needs it to pull the private image.
-Create a GitHub token (classic, read:packages scope) at github.com/settings/tokens
-and add it as that repo secret. The same token works in every repo you own."
+Create YOUR OWN GitHub token (classic, read:packages scope) at
+github.com/settings/tokens and add it as that repo secret. Under an organization
+it also needs read access to the package, the org must allow classic tokens, and
+— if the org uses single sign-on — the token must be authorized for the org.
+Click-by-click: .deploy/docs/SECRETS.md"
     mask "$rpass"
 
+    # Falling back to the repository's owner is right on a personal repo. On an
+    # organization the owner is the ORG's name, not the account that owns the
+    # token — set build.registry_username there. validate.sh warns about it.
     ruser="$(cfg '.build.registry_username' '')"
     [[ -z "$ruser" ]] && { ruser="${GITHUB_REPOSITORY_OWNER:-${GITHUB_REPOSITORY:-}}"; ruser="${ruser%%/*}"; }
     [[ -z "$ruser" ]] && die "build.registry_username is empty and the repository owner is unknown —
