@@ -243,20 +243,23 @@ bundle.
     build_args:
       BUILD_TIME_ENV: "VITE_BASE_URL=https://api-${STAGE}.example.com"
   ```
-- **No pattern, or it must change without a rebuild** → make it a runtime value:
+- **No pattern, or it must stay changeable after the deploy** → move that name
+  from `BUILD_TIME_ENV` to `RUNTIME_ENV`, same format, same place:
   ```yaml
-  env:
-    static:
-      RUNTIME_ENV: "BASE_URL=https://api-staging.example.com"
+  build:
+    build_args:
+      BUILD_TIME_ENV: "VITE_ENV=${BRANCH_SLUG}"
+      RUNTIME_ENV: "VITE_BASE_URL=https://api-staging.example.com"
   ```
-  Vary it per stage in `preview_defaults.env`. The frontend preset writes
-  `/env.js` at container start and loads it before the bundle, so it becomes an
-  ordinary Railway variable — editable, no rebuild. This needs one line changed
-  in the app, which you may NOT change yourself; put it in the final report with
-  the real file and the real variable:
-  ```js
-  const BASE = window.__ENV__?.BASE_URL ?? import.meta.env.VITE_BASE_URL
-  ```
+  That becomes the default and stays editable: set a `RUNTIME_ENV` variable on
+  any Railway environment and restart to point it somewhere else. No rebuild.
+
+  **Change nothing in the app for this.** The preset builds a marker into the
+  bundle in place of the value and rewrites it at container start, so the code
+  still reads `import.meta.env.VITE_BASE_URL` and `npm run dev` is unaffected.
+  A name goes in one list or the other, never both — and if the project
+  validates its env *while building* rather than in the browser, keep it in
+  `BUILD_TIME_ENV`.
 
 Never put a secret in `build_args` — they stay readable inside the image.
 

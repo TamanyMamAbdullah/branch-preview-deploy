@@ -26,25 +26,30 @@
 # (space-separated NAME=value pairs; values must not contain spaces — and no
 # secrets: build args end up readable in the image)
 #
-# RUNTIME values — change them in Railway, no rebuild
-# ---------------------------------------------------
-# A baked value cannot be changed after the fact, which is why the Railway
-# variable seems to do nothing. To make one editable, set it as an ordinary
-# variable in config.yml instead:
+# RUNTIME values — editable in Railway, no rebuild, NO app change
+# ---------------------------------------------------------------
+# A baked value cannot be changed afterwards, which is why editing the Railway
+# variable appears to do nothing. List a variable here instead and it stays
+# editable for the life of the image:
 #
-#     env:
-#       static:
-#         RUNTIME_ENV: "API_URL=https://api.example.com"
+#     build_args:
+#       RUNTIME_ENV: "VITE_API_URL=https://api.example.com"
 #
-# At container start this writes /env.js and loads it before the bundle, so the
-# app can read window.__ENV__.API_URL. Change the variable in Railway (or per
-# stage in preview_defaults.env), restart, and the new value is live.
+# How: the build bakes the marker __RV_VITE_API_URL__ into the bundle instead
+# of the value, and container start rewrites that marker in the built files —
+# to the default above, or to whatever a RUNTIME_ENV variable on the service
+# says. Change it in Railway, restart, done.
 #
-# The app has to ask for it — one line where the URL is read:
+# The app is not touched and does not know any of this happened. It still reads
+# import.meta.env.VITE_API_URL, and `npm run dev` is unaffected.
 #
-#     const API = window.__ENV__?.API_URL ?? import.meta.env.VITE_API_URL
+# Same NAME=value format as BUILD_TIME_ENV. Use BUILD_TIME_ENV for values that
+# never change per environment, RUNTIME_ENV for the ones that do. A name must
+# appear in only one of them.
 #
-# The fallback keeps local `npm run dev` working exactly as before.
+# One limit worth knowing: the marker replaces the value at BUILD time, so a
+# project that validates its env while building (rather than in the browser)
+# will reject it. Those keep using BUILD_TIME_ENV.
 # =============================================================================
 
 # --- build stage --------------------------------------------------------------
@@ -62,7 +67,17 @@ RUN if [ -f package-lock.json ]; then npm ci; \
 COPY . .
 
 ARG BUILD_TIME_ENV=""
-RUN if [ -n "$BUILD_TIME_ENV" ]; then export $BUILD_TIME_ENV; fi && npm run build
+# Every RUNTIME_ENV name is built with a marker in place of its value, so the
+# value can be swapped in the finished files later. The marker is deliberately
+# unmistakable: a plain value like "main" would be far too dangerous to search
+# and replace across a whole bundle.
+ARG RUNTIME_ENV=""
+RUN if [ -n "$BUILD_TIME_ENV" ]; then export $BUILD_TIME_ENV; fi \
+ && for pair in $RUNTIME_ENV; do \
+      name=${pair%%=*}; \
+      if [ "$name" != "$pair" ]; then export "$name=__RV_${name}__"; fi; \
+    done \
+ && npm run build
 
 # --- serve stage --------------------------------------------------------------
 # Note: the official nginx image starts as root and drops to the unprivileged
@@ -105,39 +120,43 @@ server {
 }
 EOF
 
-# Runtime configuration. The nginx image runs every /docker-entrypoint.d/*.sh
-# at startup, so this rewrites /env.js on each boot from whatever RUNTIME_ENV
-# holds — the one way a static bundle can read a value that was not compiled
-# into it. Unset RUNTIME_ENV leaves an empty object, which is harmless.
+# The defaults travel with the image; a RUNTIME_ENV variable on the service
+# overrides any of them at boot. Kept under a separate name so Railway setting
+# RUNTIME_ENV cannot wipe the fallbacks.
+ARG RUNTIME_ENV=""
+ENV RUNTIME_ENV_DEFAULTS="$RUNTIME_ENV"
+
+# The nginx image runs every /docker-entrypoint.d/*.sh before starting, so each
+# boot re-resolves the markers from the CURRENT variables. Restarting the
+# service is therefore enough to change a value — no rebuild.
 COPY <<'EOF' /docker-entrypoint.d/40-runtime-env.sh
 #!/bin/sh
 set -e
-out=/usr/share/nginx/html/env.js
-{
-  printf 'window.__ENV__={'
-  first=1
-  for pair in ${RUNTIME_ENV:-}; do
-    name=${pair%%=*}
-    value=${pair#*=}
-    # No '=' in the word means it is not a pair — skip rather than emit junk.
-    # Written as `if`, not `[ ] && continue`: under set -e a trailing failed
-    # test is the classic way a startup script dies for no visible reason.
-    if [ "$name" != "$pair" ]; then
-      [ "$first" = 1 ] || printf ','
-      printf '"%s":"%s"' "$name" "$value"
-      first=0
-    fi
+root=/usr/share/nginx/html
+[ -n "${RUNTIME_ENV_DEFAULTS:-}" ] || exit 0
+
+# Resolve each name ONCE, override first. Replacing as we go would consume the
+# marker on the default pass and leave the override with nothing to match.
+for pair in $RUNTIME_ENV_DEFAULTS; do
+  name=${pair%%=*}
+  if [ "$name" = "$pair" ]; then continue; fi
+
+  value=${pair#*=}
+  for override in ${RUNTIME_ENV:-}; do
+    case "$override" in
+      "$name"=*) value=${override#*=} ;;
+    esac
   done
-  printf '};\n'
-} > "$out"
+
+  # Markers only ever appear in the built assets, so this cannot touch anything
+  # else. '#' as the delimiter keeps URLs (full of '/') working.
+  find "$root" -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' \) \
+    -exec sed -i "s#__RV_${name}__#${value}#g" {} +
+  echo "runtime-env: ${name} resolved"
+done
 EOF
 
-# Load it before the bundle. Done here rather than in the project's index.html
-# so no project file is touched — the kit never edits the app it deploys.
-RUN chmod +x /docker-entrypoint.d/40-runtime-env.sh \
- && if [ -f /usr/share/nginx/html/index.html ]; then \
-      sed -i 's|<head>|<head><script src="/env.js"></script>|' /usr/share/nginx/html/index.html; \
-    fi
+RUN chmod +x /docker-entrypoint.d/40-runtime-env.sh
 
 # Default for running the image locally; the deploy sets PORT explicitly and
 # routes the public domain to the same number. EXPOSE documents it for tools

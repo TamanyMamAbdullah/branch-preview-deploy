@@ -224,24 +224,27 @@ Pick from their answer:
     build_args:
       BUILD_TIME_ENV: "VITE_BASE_URL=https://api-${STAGE}.example.com"
   ```
-- **No pattern, or it must change without a rebuild** → make it a RUNTIME value
-  instead:
+- **No pattern, or it must stay changeable after the deploy** → move that name
+  from `BUILD_TIME_ENV` to `RUNTIME_ENV`, same format, same place:
   ```yaml
-  env:
-    static:
-      RUNTIME_ENV: "BASE_URL=https://api-staging.example.com"
+  build:
+    build_args:
+      BUILD_TIME_ENV: "VITE_ENV=${BRANCH_SLUG}"
+      RUNTIME_ENV: "VITE_BASE_URL=https://api-staging.example.com"
   ```
-  Vary it per stage in `preview_defaults.env`. The shipped frontend preset
-  writes `/env.js` at container start and loads it before the bundle, so the
-  value is a normal Railway variable — editable, no rebuild.
+  That value becomes the default, and stays editable: whoever needs a different
+  backend sets a `RUNTIME_ENV` variable on that Railway environment and
+  restarts. No rebuild, no redeploy, no config edit.
 
-  This one needs a change in the app, which you are NOT allowed to make. Put
-  the exact line in your final report (hard rule 4), naming the real file and
-  the real variable you found:
-  ```js
-  const BASE = window.__ENV__?.BASE_URL ?? import.meta.env.VITE_BASE_URL
-  ```
-  The fallback keeps `npm run dev` working unchanged.
+  **Change nothing in the app for this.** The preset builds a marker into the
+  bundle in place of the value and rewrites it at container start, so the code
+  still reads `import.meta.env.VITE_BASE_URL` and `npm run dev` is unaffected.
+  Do not add a `window.__ENV__` lookup, and do not touch the project's env
+  module — that would break hard rule 1 for no reason.
+
+  A name goes in `BUILD_TIME_ENV` **or** `RUNTIME_ENV`, never both. And if the
+  project validates its env *while building* rather than in the browser, the
+  marker fails that check — keep those in `BUILD_TIME_ENV`.
 
 Never put a secret in `build_args` — build args stay readable inside the image.
 
