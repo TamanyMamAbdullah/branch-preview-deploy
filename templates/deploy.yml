@@ -30,7 +30,7 @@ on:
         default: preview
         required: true
       seed:
-        description: "Override the dump for this run (s3://...). Blank = config"
+        description: "Dump to load — file name only, e.g. baseline.archive.gz. Blank = empty database"
         type: string
         required: false
   pull_request:

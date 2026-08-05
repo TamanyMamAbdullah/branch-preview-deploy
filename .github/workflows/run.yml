@@ -31,7 +31,7 @@ on:
         type: string
         default: preview
       seed:
-        description: "Override the dump for this run (s3://...)"
+        description: "Dump to load — file name only, resolved inside the configured bucket"
         type: string
         default: ""
       config:

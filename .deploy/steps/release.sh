@@ -243,6 +243,54 @@ _dump_failure() {
 # -----------------------------------------------------------------------------
 # step_summary — write the result to the workflow summary panel.
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# summary_seeding_help — print the exact, filled-in command for putting a dump
+# where this project reads them from.
+#
+# This exists because of ACTION MODE. There the project has no .deploy/ folder,
+# so `bash .deploy/upload-dump.sh` is not sitting there to run — and the bucket,
+# the endpoint and the project's folder are all things the run already knows and
+# the user would otherwise have to reassemble by hand. Printing the finished
+# command needs no script, no clone and no tool beyond the AWS CLI.
+#
+# Doubly worth it because the storage GUIs fall over on real dumps: a browser
+# sends the file as one request, while `aws s3 cp` splits anything sizeable into
+# parts and retries them. IDrive e2's own upload dialog says as much.
+# -----------------------------------------------------------------------------
+summary_seeding_help() {
+  [[ "$DB_ENGINE" == "none" ]] && return 0
+  [[ "$(cfg '.db.restore.tool' 'none')" == "none" ]] && return 0
+
+  local folder ep
+  folder="$(seed_folder_url)"
+  [[ -z "$folder" ]] && return 0          # no bucket configured — nothing to say
+  ep="$(cfg '.db.restore.s3_endpoint' '')"
+
+  summary "<details><summary><b>📦 Load a dump into the next deploy</b></summary>"
+  summary ""
+  summary "This project's dumps live in \`$folder\` — one folder per project, named"
+  summary "automatically. Put a file there from your machine:"
+  summary ""
+  summary '```bash'
+  if [[ -n "$ep" ]]; then
+    summary "aws s3 cp yourdump.archive.gz ${folder}yourdump.archive.gz \\"
+    summary "  --endpoint-url $ep"
+  else
+    summary "aws s3 cp yourdump.archive.gz ${folder}yourdump.archive.gz"
+  fi
+  summary '```'
+  summary ""
+  summary "S3 has no real folders, so that path creates itself — there is nothing to"
+  summary "set up in the dashboard first. Use the CLI rather than the web uploader:"
+  summary "it splits large files into parts and retries them, which is why a browser"
+  summary "upload of a big dump tends to fail."
+  summary ""
+  summary "Then run this workflow again and put **\`yourdump.archive.gz\`** in the"
+  summary "**dump** box. Leaving that box blank keeps the database empty."
+  summary "</details>"
+  summary ""
+}
+
 step_summary() {
   summary "## 🚀 \`$BRANCH\` is live"
   summary ""
@@ -265,8 +313,17 @@ step_summary() {
   summary "| Commit | \`$SHA7\` |"
   summary "| Image | \`${IMAGE_REF:-?}\` (reused: ${IMAGE_REUSED:-false}) |"
   summary "| Health | [\`$(interp "$(cfg '.runtime.health_check_path' /)")\`](${HEALTH_URL:-$PUBLIC_URL}) |"
-  [[ "$DB_ENGINE" != "none" ]] && summary "| Database | \`$DB_ENGINE\` — fresh, restored from the dump |"
+  if [[ "$DB_ENGINE" != "none" ]]; then
+    if [[ -n "${SEED_SOURCE:-}" ]]; then
+      summary "| Database | \`$DB_ENGINE\` — fresh, seeded from \`$(basename "$SEED_SOURCE")\` |"
+    else
+      summary "| Database | \`$DB_ENGINE\` — fresh and **empty** (no dump chosen) |"
+    fi
+  fi
   summary ""
+
+  summary_seeding_help
+
 
   if [[ "$STAGE" == "preview" ]]; then
     summary "---"
@@ -276,8 +333,13 @@ step_summary() {
     summary "on a Trial or Free plan a couple of forgotten previews will use up the"
     summary "credit within days."
     summary ""
-    summary "Re-deploying reloads the database from the dump, so anything entered by"
-    summary "hand in this preview will be gone."
+    if [[ -n "${SEED_SOURCE:-}" ]]; then
+      summary "Re-deploying reloads the database from the dump, so anything entered by"
+      summary "hand in this preview will be gone."
+    elif [[ "$DB_ENGINE" != "none" ]]; then
+      summary "Re-deploying rebuilds the database empty again, so anything entered by"
+      summary "hand in this preview will be gone."
+    fi
   fi
 
   log_ok "summary written"

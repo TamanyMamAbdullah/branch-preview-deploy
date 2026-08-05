@@ -46,8 +46,9 @@ the GitHub package flipped to Public.
 *Q2 — the database:* "Every preview branch gets its own throwaway database,
 created fresh and deleted with the preview. Do you want **A — none** (no
 database, or the app uses one that already exists elsewhere), **B — empty**
-(its own database, starting blank), or **C — loaded from an export** (same as
-B, plus a dump file restored into it on every deploy)?"
+(its own database, starting blank), or **C — able to load a dump** (same as B,
+plus you can pick a dump file to load when you press the deploy button —
+previews still start empty unless you name one)?"
 
 - **A** → `db.engine: none`, and nothing else in the `db:` block matters.
 - **B** → set `db.engine`, `db.connection_env` (the EXACT variable the app
@@ -58,16 +59,29 @@ B, plus a dump file restored into it on every deploy)?"
 These answers **beat anything you infer from the code.** A project that has a
 database in development may deliberately not want one cloned into previews.
 
-*Q3 — only for answer C.* Ask all three at once:
+*Q3 — only for answer C.* First understand how dumps work here, because it
+changes what you ask. **Nobody writes a URL.** One bucket holds the dumps for
+every project; each project reads from its own folder inside it, named
+automatically after `project.name`:
+
+```
+s3://<bucket>/<project.name>/<file>
+```
+
+Uploading is manual and stays manual. Loading is chosen per deploy: the
+"Deploy branch" button has a **dump** box, you type a **file name** into it,
+and leaving it blank starts the database empty — the default.
+
+Ask all three at once:
 1. Which database and which version made the export (e.g. "MongoDB 7")? The
    preview's `db.service_image` must be that version or newer, or the restore
    fails.
 2. How was the export made? The exact command if they have it, otherwise the
    file name.
-3. Where does the file live — the full path including the file name, e.g.
-   `s3://my-bucket/seed.archive.gz`? And, if the bucket is not Amazon S3
-   (Cloudflare R2, IDrive e2, Backblaze B2, MinIO…), the endpoint URL from
-   that provider's dashboard.
+3. Which bucket holds your dumps, and who hosts it? The bucket NAME only — the
+   folder is derived. If it is not Amazon S3 (IDrive e2, Cloudflare R2,
+   Backblaze B2, MinIO…), the endpoint URL from that provider's dashboard.
+   The same bucket should serve every project.
 
 Map answer 2 onto `db.restore`:
 
@@ -84,14 +98,42 @@ Map answer 2 onto `db.restore`:
 `pg_dump -Fc` is compressed internally, so `gzip` stays `false`. Any other
 combination is unsupported — say so instead of guessing.
 
-Answer 3 sets `restore.seed_source` (the FULL path, file name included — the
-kit downloads one exact object and never searches the bucket) and
-`restore.s3_endpoint` for non-Amazon storage. An `s3://` source also means
-two extra secret rows in your final report: `SEED_S3_ACCESS_KEY_ID` and
-`SEED_S3_SECRET_ACCESS_KEY`, read-only keys for that bucket.
+Answer 3 sets `restore.bucket`, plus `restore.s3_endpoint` for non-Amazon
+storage. Set **nothing else** about location — leave `folder`, `default_dump`
+and `seed_source` empty. An empty `default_dump` is exactly what makes previews
+start blank. Using a bucket also means two extra secret rows in your final
+report: `SEED_S3_ACCESS_KEY_ID` and `SEED_S3_SECRET_ACCESS_KEY`, read-only keys
+for that bucket.
 
-Two things to tell them for answer C: if the database name inside the export
-differs from `db.database_name`, Mongo needs
+Your final report must then tell them, filled in with the real bucket and real
+project name, not as a template:
+
+- **Upload dumps to** `<bucket>/<project.name>/`, with the finished command,
+  not a template. Say to use the AWS CLI rather than the web dashboard — a
+  browser sends the file in one request and large dumps fail, while the CLI
+  splits and retries. Nothing to create first: S3 has no real folders, so the
+  path appears on its own.
+  ```bash
+  aws s3 cp yourdump.archive.gz s3://<bucket>/<project.name>/yourdump.archive.gz \
+    --endpoint-url <their endpoint>
+  ```
+  Drop `--endpoint-url` for Amazon S3. `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY` must be set first, with a key that can WRITE — the
+  two GitHub secrets only need read.
+- **The one file shape this project accepts**, matching the `format`/`gzip`
+  you set — e.g. "a gzipped mongodump archive, from
+  `mongodump --archive=NAME.archive.gz --gzip`". Name that one only.
+- **Names are free** (`baseline.archive.gz`, `2026-08-with-orders.archive.gz`)
+  and many can sit side by side, because the name is how you pick one.
+- **To load one:** Actions → "Deploy branch" → Run workflow → type the file
+  name into the **dump** box. Blank = empty database, which is the normal case.
+- In FOLDER mode only, `bash .deploy/upload-dump.sh yourfile.gz` does the same
+  without typing the path. In ACTION mode there is no `.deploy/` folder, so the
+  `aws s3 cp` line is the way — and every deploy summary reprints it with this
+  project's bucket, folder and endpoint already filled in.
+
+Two more things to tell them for answer C: if the database name inside the
+export differs from `db.database_name`, Mongo needs
 `extra_args: ["--nsFrom=old.*", "--nsTo=new.*"]`; and a dump taken straight
 from production puts real customer data into previews that anyone with the
 link can open — recommend a small scrubbed dump instead.

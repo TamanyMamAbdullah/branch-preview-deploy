@@ -110,20 +110,30 @@ step_validate() {
     _one_of "$tool" "db.restore.tool" mongorestore pg_restore psql none
 
     if [[ "$tool" != "none" ]]; then
-      local seed; seed="$(interp "$(cfg '.db.restore.seed_source' '')")"
-      _need '.db.restore.seed_source' 'db.restore.seed_source' || true
       _one_of "$(cfg '.db.restore.mode' 'always')" "db.restore.mode" always once
 
-      if [[ "$seed" == s3://* ]]; then
+      # Which dump (if any) this run will load. NO dump is the normal, valid
+      # default — a preview starts empty unless someone names one — so an empty
+      # answer here is reported, never faulted.
+      seed_resolve_source
+      local seed="$SEED_SOURCE"
+      [[ -n "$SEED_RESOLVE_ERR" ]] && _problem "$SEED_RESOLVE_ERR"
+
+      if [[ -z "$seed" && -z "$SEED_RESOLVE_ERR" ]]; then
+        log_info "dump        : none chosen — the database will start EMPTY"
+        log_info "              (type a file name in the button's 'dump' box, or"
+        log_info "               set db.restore.default_dump to always seed)"
+      elif [[ "$seed" == s3://* ]]; then
+        log_info "dump        : $seed"
         local kn sn
         kn="$(cfg '.db.restore.s3_key_id_env' 'SEED_S3_ACCESS_KEY_ID')"
         sn="$(cfg '.db.restore.s3_secret_env' 'SEED_S3_SECRET_ACCESS_KEY')"
         secret_has "$kn" || _problem "secret '$kn' is not set — needed to download the dump"
         secret_has "$sn" || _problem "secret '$sn' is not set — needed to download the dump"
-      elif [[ -n "$seed" && "$seed" != "TODO_FILL_ME" && ! -f "$seed" ]]; then
-        _problem "db.restore.seed_source '$seed' is not an s3:// URL and does not exist as a file.
+      elif [[ -n "$seed" && ! -f "$seed" ]]; then
+        _problem "the dump '$seed' is not an s3:// URL and does not exist as a file.
       Remember CI only has what is COMMITTED — an untracked local file is not there.
-      Put dumps in .deploy/dumps/ and run: bash .deploy/upload-dump.sh"
+      Upload dumps to $(seed_folder_url), then pick one by name."
       fi
     fi
 

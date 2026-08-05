@@ -23,6 +23,88 @@
 # shellcheck shell=bash
 
 # -----------------------------------------------------------------------------
+# seed_resolve_source — work out WHICH dump this run should load.
+#
+# Prints the source (an s3:// URL or a local path), or nothing at all when no
+# dump was asked for — which is the normal case. A preview starts with an empty
+# database unless someone names a dump, so "nothing" is a valid answer here and
+# never an error.
+#
+# Precedence, highest first:
+#   1. db.restore.seed_source   an exact URL, for a dump outside the bucket
+#   2. the deploy button's "dump" box  (DEPLOY_SEED)
+#   3. db.restore.default_dump  the project's own default, recorded in git
+#
+# For 2 and 3 the location is DERIVED, never typed:
+#     s3://<db.restore.bucket>/<db.restore.folder or project.name>/<name>
+# so the same config block works unchanged in every project and nobody has to
+# keep an s3 path straight in their head.
+#
+# Called by validate too, so it must not die: a problem sets SEED_RESOLVE_ERR
+# and the caller decides whether that is a warning or fatal.
+#
+# Answers through GLOBALS, not stdout. `x="$(seed_resolve_source)"` would run
+# this in a subshell, and SEED_RESOLVE_ERR set in there is discarded on the way
+# out — so every error would be silently swallowed and the run would carry on
+# as if no dump had been asked for.
+# -----------------------------------------------------------------------------
+SEED_SOURCE=""
+SEED_RESOLVE_ERR=""
+seed_resolve_source() {
+  SEED_SOURCE=""; SEED_RESOLVE_ERR=""
+  local explicit chosen bucket folder
+
+  explicit="$(interp "$(cfg '.db.restore.seed_source' '')")"
+  if [[ -n "$explicit" && "$explicit" != "TODO_FILL_ME" ]]; then
+    SEED_SOURCE="$explicit"; return 0
+  fi
+
+  chosen="${DEPLOY_SEED:-}"
+  [[ -z "$chosen" ]] && chosen="$(interp "$(cfg '.db.restore.default_dump' '')")"
+  [[ -z "$chosen" ]] && return 0            # nobody asked for data — empty database
+
+  # A full URL pasted into the box still works, rather than being mangled into
+  # a bucket path. Costs one test and removes a confusing failure.
+  if [[ "$chosen" == s3://* || -f "$chosen" ]]; then
+    SEED_SOURCE="$chosen"; return 0
+  fi
+
+  # A name with a slash means someone typed part of a path. Taking it literally
+  # would silently read from the wrong folder, so say what the convention is.
+  if [[ "$chosen" == */* ]]; then
+    SEED_RESOLVE_ERR="dump '$chosen' contains a '/'. Give the FILE NAME only — the
+      folder is chosen for you (see db.restore.bucket in the config)."
+    return 0
+  fi
+
+  bucket="$(cfg '.db.restore.bucket' '')"
+  bucket="${bucket#s3://}"; bucket="${bucket%/}"
+  if [[ -z "$bucket" ]]; then
+    SEED_RESOLVE_ERR="dump '$chosen' was requested, but db.restore.bucket is empty —
+      there is nowhere to fetch it from. Set the bucket, or clear the dump to
+      start with an empty database."
+    return 0
+  fi
+
+  folder="$(interp "$(cfg '.db.restore.folder' '')")"
+  [[ -z "$folder" ]] && folder="$PROJECT_NAME"
+  folder="${folder#/}"; folder="${folder%/}"
+
+  SEED_SOURCE="s3://$bucket/$folder/$chosen"
+}
+
+# seed_folder_url — the folder this project's dumps belong in, for messages.
+seed_folder_url() {
+  local bucket folder
+  bucket="$(cfg '.db.restore.bucket' '')"
+  bucket="${bucket#s3://}"; bucket="${bucket%/}"
+  [[ -z "$bucket" ]] && return 0
+  folder="$(interp "$(cfg '.db.restore.folder' '')")"
+  [[ -z "$folder" ]] && folder="$PROJECT_NAME"
+  printf 's3://%s/%s/' "$bucket" "${folder%/}"
+}
+
+# -----------------------------------------------------------------------------
 # db_ensure_public_uri — make the database reachable from THIS runner.
 # Sets DB_PUBLIC_URI and flips PROXY_OPENED so run.sh's EXIT trap closes the
 # port however the run ends. Safe to call twice; the second call is free.
@@ -90,6 +172,20 @@ step_seed() {
     return 0
   fi
 
+  # No dump named anywhere = an empty database, deliberately. This is the
+  # default state, so it is reported plainly rather than treated as a problem —
+  # but loudly enough that nobody spends an afternoon wondering where the data
+  # went.
+  seed_resolve_source
+  [[ -n "$SEED_RESOLVE_ERR" ]] && die "$SEED_RESOLVE_ERR"
+  if [[ -z "$SEED_SOURCE" ]]; then
+    log_info "seed: no dump chosen — this preview starts with an EMPTY database"
+    log_info "      to load one, type its file name into the 'dump' box on the"
+    log_info "      Deploy branch button$( [[ -n "$(seed_folder_url)" ]] && printf ' (files in %s)' "$(seed_folder_url)" )"
+    summary "- **Database:** empty — no dump was chosen for this run"
+    return 0
+  fi
+
   require_cmd docker curl jq
 
   # --- 1+2. reach the database from here ---------------------------------------
@@ -103,8 +199,8 @@ step_seed() {
 
   # --- 3. fetch the dump ----------------------------------------------------------
   group_start "Downloading the dump"
-  local src work dest
-  src="$(interp "$(cfg '.db.restore.seed_source')")"
+  local src="$SEED_SOURCE" work dest
+  log_info "dump: $src"
   work="$(mktemp -d)"; SEED_WORKDIR="$work"      # run.sh's trap cleans this up
 
   if [[ "$src" == s3://* ]]; then
@@ -126,15 +222,35 @@ step_seed() {
 
     # Credentials scoped to this one command; never written to the runner's
     # aws config. This key only ever needs read access.
-    AWS_ACCESS_KEY_ID="$key" AWS_SECRET_ACCESS_KEY="$sec" \
-    AWS_DEFAULT_REGION="$region" AWS_EC2_METADATA_DISABLED=true \
-      aws "${aws_args[@]}" || die \
-"could not download the dump from $src
-Check the object exists at exactly that key, and that the seed key can read that bucket."
+    if ! AWS_ACCESS_KEY_ID="$key" AWS_SECRET_ACCESS_KEY="$sec" \
+         AWS_DEFAULT_REGION="$region" AWS_EC2_METADATA_DISABLED=true \
+         aws "${aws_args[@]}"; then
+      # Now that dumps are picked by NAME, the overwhelmingly likely cause is a
+      # typo. Listing what is actually in the folder turns "it failed" into
+      # "you meant this one" without a trip to the storage dashboard.
+      # Best-effort: a strictly read-only key may not be allowed to list.
+      local folder listing msg
+      folder="$(seed_folder_url)"
+      listing=""
+      if [[ -n "$folder" ]]; then
+        local ls_args=(s3 ls "$folder")
+        [[ -n "$endpoint" ]] && ls_args+=(--endpoint-url "$endpoint")
+        listing="$(AWS_ACCESS_KEY_ID="$key" AWS_SECRET_ACCESS_KEY="$sec" \
+                   AWS_DEFAULT_REGION="$region" AWS_EC2_METADATA_DISABLED=true \
+                   aws "${ls_args[@]}" 2>/dev/null | awk 'NF{print $NF}' || true)"
+      fi
+      msg="could not download the dump: $src
+Check the name is spelt exactly right, and that the seed key can read the bucket."
+      [[ -n "$listing" ]] && msg+="
+
+Dumps available in ${folder}:
+$(printf '%s\n' "$listing" | sed 's/^/      /')"
+      die "$msg"
+    fi
   else
     dest="$src"
     [[ -f "$dest" ]] || die \
-"db.restore.seed_source '$dest' does not exist.
+"the dump '$dest' does not exist.
 CI only has what is COMMITTED to git — an untracked local file will not be there.
 Put dumps in .deploy/dumps/ and run: bash .deploy/upload-dump.sh"
   fi

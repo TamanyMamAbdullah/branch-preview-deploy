@@ -29,7 +29,10 @@ inputs:
     description: "preview | dev | prod — which stage's settings to apply"
     default: preview
   seed:
-    description: "Override the dump for this run (s3://...). Blank = use the config"
+    description: >-
+      Dump to load, by FILE NAME only (e.g. baseline.archive.gz). It is fetched
+      from this project's folder in the configured bucket. Blank = whatever
+      db.restore.default_dump says, which is normally nothing — an empty database.
     default: ""
   config:
     description: "Path to the config file. Blank = .deploy/config.yml, then deploy.config.yml"
@@ -92,7 +95,7 @@ runs:
         DEPLOY_STAGE: ${{ inputs.stage }}
         DEPLOY_BRANCH: ${{ inputs.branch }}
         DEPLOY_SHA: ${{ github.sha }}
-        DEPLOY_SEED_OVERRIDE: ${{ inputs.seed }}
+        DEPLOY_SEED: ${{ inputs.seed }}
         DEPLOY_CONFIG: ${{ inputs.config }}
         # The kit runs from the action's own checkout; the project being
         # deployed is the workflow's workspace. run.sh cds there.

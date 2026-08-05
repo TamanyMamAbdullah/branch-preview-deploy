@@ -46,9 +46,18 @@
 #       database_name: myapp
 #       restore:
 #         tool: mongorestore
-#         seed_source: s3://bucket/dump.archive.gz
+#         bucket: my-team-seeds              # the SAME line in every project
 #
-#   Then: cp yourdump.archive.gz .deploy/dumps/ && bash .deploy/upload-dump.sh
+#   Upload dumps into that bucket, in a folder named after this project:
+#
+#       s3://my-team-seeds/myapp/baseline.archive.gz
+#       s3://my-team-seeds/myapp/2026-08-with-orders.archive.gz
+#
+#   by hand in your storage provider's dashboard, or with:
+#       cp yourdump.archive.gz .deploy/dumps/ && bash .deploy/upload-dump.sh
+#
+#   Then at deploy time, type the file name into the button's "dump" box —
+#   e.g. baseline.archive.gz. Leave it blank and the database starts empty.
 # =============================================================================
 
 version: 2
@@ -170,10 +179,37 @@ db:
     mode: always                  # always = reload every deploy (reproducible)
                                   # once   = only on first create (keeps data)
 
-    # Where CI fetches the dump. Put dumps in .deploy/dumps/ and run
-    # `bash .deploy/upload-dump.sh` to get them here.
-    seed_source: ""               # ★ e.g. s3://bucket/dump.archive.gz
-    s3_endpoint: ""               # not a secret
+    # -------------------------------------------------------------------------
+    # WHERE DUMPS LIVE
+    #
+    # One bucket for every project. Each project gets its own folder inside it,
+    # named automatically after project.name — so this block is the SAME text in
+    # every repo you own and there is no path to invent or keep straight:
+    #
+    #     s3://<bucket>/<project.name>/<the dump you pick at deploy time>
+    #
+    # You upload dumps by hand (see below). At deploy time you type WHICH one to
+    # load into the "dump" box on the Deploy branch button — just the file name,
+    # never a URL.
+    # -------------------------------------------------------------------------
+    bucket: ""                    # ★ e.g. my-team-seeds — identical everywhere
+    folder: ""                    # blank = project.name. ${TOKENS} allowed.
+
+    # Which dump loads when the deploy button's "dump" box is left blank.
+    # Blank here too = the database starts EMPTY. That is the default on
+    # purpose: a preview never loads data unless someone asks for it by name.
+    # Set it to a file name (e.g. "baseline.archive.gz") when a project should
+    # always come up seeded, so the choice is recorded in git rather than
+    # living only in whoever pressed the button.
+    default_dump: ""
+
+    # Escape hatch: one exact s3:// URL, ignoring the convention above. Only
+    # for a dump that lives outside the shared bucket. Set = it always wins.
+    seed_source: ""
+
+    s3_endpoint: ""               # not a secret. Required for non-Amazon
+                                  # storage (Cloudflare R2, IDrive e2, B2, …) —
+                                  # copy it from that provider's dashboard.
     s3_region: us-east-1
     s3_key_id_env: SEED_S3_ACCESS_KEY_ID
     s3_secret_env: SEED_S3_SECRET_ACCESS_KEY

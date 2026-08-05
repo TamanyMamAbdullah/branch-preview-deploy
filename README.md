@@ -68,8 +68,9 @@ Nothing below can be guessed from the code.
 > **A — None.** The app has no database, or it talks to one that already
 > exists elsewhere (you pass its connection string as a secret).
 > **B — Empty.** Give each preview its own database, but start it blank.
-> **C — Loaded from an export.** Same as B, plus load a dump file into it on
-> every deploy, so every preview starts with the same real data.
+> **C — Able to load a dump.** Same as B, plus you can pick a dump file to
+> load when you press the deploy button. Previews still start empty by
+> default — data arrives only when you ask for it by name.
 
 Set the config from the answer:
 
@@ -83,6 +84,19 @@ For A and B you are done with the database. Go to Step 1.
 
 ### Q3 — only if the answer to Q2 was C
 
+**How dumps work here — understand this before you ask.** You never write a
+URL. One bucket holds the dumps for every project, and each project reads from
+its own folder inside it, named automatically after `project.name`:
+
+```
+s3://<bucket>/<project.name>/<file>
+```
+
+Uploading is manual and always will be — you put files in that folder yourself.
+Loading is a choice made at deploy time: the "Deploy branch" button has a
+**dump** box, and you type a **file name** into it (`baseline.archive.gz`).
+Leave the box blank and the database starts empty. That is the default.
+
 Ask all three at once:
 
 > 1. **Which database, and which version made the export?** e.g. "MongoDB 7"
@@ -91,10 +105,10 @@ Ask all three at once:
 > 2. **How was the export made?** Paste the exact command if you have it —
 >    e.g. `mongodump --archive=dump.gz --gzip`, or `pg_dump -Fc`. If you only
 >    know the file name, tell me that (`dump.archive.gz`, `db.sql`, a folder…).
-> 3. **Where does the file live?** I need the full path, file name included —
->    e.g. `s3://my-bucket/seed.archive.gz`. And if the bucket is NOT Amazon
->    S3 (Cloudflare R2, IDrive e2, Backblaze B2, MinIO…), paste the endpoint
->    URL from that provider's dashboard.
+> 3. **Which bucket holds your dumps, and who hosts it?** Just the bucket
+>    name — I work out the folder myself. If it is NOT Amazon S3 (IDrive e2,
+>    Cloudflare R2, Backblaze B2, MinIO…), paste the endpoint URL from that
+>    provider's dashboard. Use the same bucket for every project.
 
 Then fill `db.restore` from the answers. Answer 1 sets `db.service_image` to
 that version **or newer** (`mongo:8`, `postgres:16`). Answer 2 maps to the
@@ -113,9 +127,10 @@ tool and format:
 `pg_dump -Fc` is already compressed internally — leave `gzip: false` for it.
 Anything else is unsupported; say so rather than guessing.
 
-Answer 3 sets `seed_source` (the FULL path, file name included — a bare
-`s3://bucket/` is not enough; the kit never searches the bucket), plus
-`s3_endpoint` when it isn't Amazon. A finished block looks like:
+Answer 3 sets `bucket` and, for non-Amazon storage, `s3_endpoint`. Set
+**nothing else** about location — no `folder`, no `default_dump`, no
+`seed_source`. Leaving `default_dump` empty is what makes previews start empty,
+which is the behaviour we want. A finished block looks like:
 
 ```yaml
 db:
@@ -127,8 +142,8 @@ db:
     tool: mongorestore
     format: archive
     gzip: true
-    mode: always                # always = reload every deploy (reproducible)
-    seed_source: s3://my-bucket/seed.archive.gz
+    mode: always                # reload the chosen dump on every deploy
+    bucket: my-team-seeds       # the SAME line in every project
     s3_endpoint: https://xxxx.idrivee2-yy.com   # omit entirely for Amazon S3
     s3_region: us-east-1
 ```
@@ -224,10 +239,48 @@ Fix the config until all of that is green. Do not report success otherwise.
    the name must match the table exactly, capitals and underscores included.
    Click-by-click guide: `.deploy/docs/SECRETS.md`.
 
-4. The launch steps: commit and push, then GitHub → **Actions** → **"Deploy
+4. **Where to put the dump — only if the Q2 answer was C.** Write this out
+   filled in, not as a template. The user has to be able to follow it in
+   their storage dashboard without asking you anything:
+
+   > **Upload your dump files here:**
+   > `<bucket>/<project.name>/`
+   > *(state the real bucket and the real project name — e.g.
+   > `my-team-seeds/vod-admin-api/`)*
+   >
+   > **Upload it with the AWS CLI, not the web dashboard.** A browser sends the
+   > file in one request and large dumps fail; the CLI splits them into parts
+   > and retries. Nothing to create first — S3 has no real folders, so this
+   > path appears on its own:
+   >
+   > ```bash
+   > aws s3 cp yourdump.archive.gz s3://<bucket>/<project.name>/yourdump.archive.gz \
+   >   --endpoint-url <their endpoint>
+   > ```
+   > *(fill in all three. Drop the `--endpoint-url` line entirely for Amazon S3.
+   > Set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` first, using a key that
+   > can WRITE — the two GitHub secrets only need read.)*
+   >
+   > **This project accepts:** *(name the ONE shape matching the `format` and
+   > `gzip` you set — e.g. "a gzipped mongodump archive, made with
+   > `mongodump --archive=NAME.archive.gz --gzip`". Do not list the others.)*
+   >
+   > **Name it whatever you like** — `baseline.archive.gz`,
+   > `2026-08-with-orders.archive.gz`. The file name is how you pick it later,
+   > so make it descriptive. You can keep as many as you want side by side.
+   >
+   > **To load one:** Actions → "Deploy branch" → Run workflow → type the file
+   > name into the **dump** box → Run. **Leave that box blank and the preview
+   > starts with an empty database** — that is the normal case.
+
+   In folder mode only, mention that `bash .deploy/upload-dump.sh yourfile.gz`
+   does the same thing without typing the path. In action mode there is no
+   `.deploy/` folder, so the `aws s3 cp` line above IS the way — and every
+   deploy's summary reprints it with this project's values already filled in.
+5. The launch steps: commit and push, then GitHub → **Actions** → **"Deploy
    branch"** → pick the branch → **Run workflow**. The live URL appears at
    the top of the run's summary page.
-5. Optional hardening: after the first deploy, the run prints the Railway
+6. Optional hardening: after the first deploy, the run prints the Railway
    project id — pasting it into `railway.project_id` in `.deploy/config.yml`
    pins the project. Later deploys and cleanups already find it by name
    automatically; the pin just also survives a project rename.
@@ -285,7 +338,7 @@ The preset builds with `npm run build`, serves the result on Railway's port,
 answers `/health` (so the default health check passes), and falls back to
 `index.html` so page refreshes on client-side routes don't 404.
 
-### Backend + MongoDB, seeded from a dump
+### Backend + MongoDB, with dumps you can pick from
 
 ```yaml
 db:
@@ -294,17 +347,30 @@ db:
   database_name: myapp
   restore:
     tool: mongorestore
-    seed_source: s3://bucket/dump.archive.gz
+    bucket: my-team-seeds              # the SAME line in every project
 ```
 
-Then upload the dump once: `cp dump.archive.gz .deploy/dumps/ && bash
-.deploy/upload-dump.sh` (first `export` the two `SEED_S3_*` values in your
-terminal, using a key that can **write** to the bucket — the GitHub secrets
-below only need read).
-In action mode there is no `.deploy/` folder in your repo — clone this kit
-next to your project once and run its `upload-dump.sh` from your project's
-root, or upload the dump to your bucket any way you like; only
-`db.restore.seed_source` matters to the deploy.
+**You never write a path.** One bucket holds every project's dumps, and each
+project reads from its own folder inside it, named after `project.name`:
+
+```
+s3://my-team-seeds/myapp/baseline.archive.gz
+s3://my-team-seeds/myapp/2026-08-with-orders.archive.gz
+```
+
+Upload files there however you like — your provider's dashboard, or
+`bash .deploy/upload-dump.sh yourfile.gz`, which puts them in exactly that
+folder. Keep as many as you want side by side.
+
+Then pick one **per deploy**: Actions → Deploy branch → put the file name in
+the **dump** box. Leave it blank and the preview starts with an **empty
+database** — that is the default, so data never appears unless someone asks
+for it by name. To make a project always seed, set `default_dump` in the
+config and the choice is recorded in git rather than in whoever pressed the
+button.
+
+Not on Amazon? Add the endpoint from your provider's dashboard —
+`s3_endpoint: https://…` — and everything else stays the same.
 
 ### Keeping the built image private (Railway Pro)
 
@@ -390,7 +456,7 @@ bash .deploy/update.sh          # fetch the latest kit; config.yml and dumps sur
 |---|---|
 | `action` | `deploy` or `destroy` |
 | `stage` | `preview` (default), `dev`, `prod` — which settings in `config.yml` apply |
-| `seed` | Optional: a different dump for this one run (`s3://…`). Blank = config.yml |
+| `seed` | Which dump to load, **file name only** (`baseline.archive.gz`). Blank = empty database |
 
 ---
 

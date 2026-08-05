@@ -6,6 +6,15 @@
 #   bash .deploy/upload-dump.sh                 # the newest file in dumps/
 #   bash .deploy/upload-dump.sh mydump.gz       # a specific one
 #
+# Uploading by hand in your storage provider's dashboard works just as well —
+# this is a convenience, not a requirement. Either way the destination is the
+# same, and it is DERIVED rather than typed:
+#
+#     s3://<db.restore.bucket>/<project.name>/<the file's own name>
+#
+# The file keeps its name, and that name is what you type into the deploy
+# button's "dump" box to load it. Nothing anywhere holds a URL.
+#
 # This exists because of the most common trip-up: the dump sits on your laptop,
 # CI clones from GitHub, and the file simply isn't there. A dump doesn't belong
 # in git either — it's large, and git keeps every version forever, so each new
@@ -28,6 +37,13 @@ source "$DEPLOY_DIR/lib/secrets.sh"
 require_cmd aws jq yq
 cfg_load "${DEPLOY_CONFIG:-}"
 
+# The destination folder is derived from project.name, exactly as a deploy
+# derives it. compute_names is what fills that in; without it this script and
+# the deploy would disagree about where the dump lives.
+compute_names
+# shellcheck source=./steps/seed.sh
+source "$DEPLOY_DIR/steps/seed.sh"     # seed_folder_url, the one definition of the convention
+
 DUMPS="$DEPLOY_DIR/dumps"
 mkdir -p "$DUMPS"
 
@@ -45,11 +61,21 @@ fi
 [[ -f "$FILE" ]] || die "no such file: $FILE"
 
 # --- where it goes ---------------------------------------------------------------
-SEED_SOURCE="$(cfg '.db.restore.seed_source' '')"
-[[ -z "$SEED_SOURCE" || "$SEED_SOURCE" == "TODO_FILL_ME" ]] && die \
-"db.restore.seed_source is not set in config.yml — set it to the s3:// path you
-want the dump to live at, then run this again."
-[[ "$SEED_SOURCE" == s3://* ]] || die "db.restore.seed_source is not an s3:// URL: $SEED_SOURCE"
+# The file keeps its own name, in this project's folder. That name IS what you
+# type into the deploy button's "dump" box later, so what you upload and what
+# you pick can never drift apart.
+FOLDER="$(seed_folder_url)"
+[[ -z "$FOLDER" ]] && die \
+"db.restore.bucket is not set in the config — there is nowhere to upload to.
+Set it to the bucket that holds every project's dumps, e.g.
+
+  db:
+    restore:
+      bucket: my-team-seeds
+
+This project's dumps then live in a folder named after it, automatically."
+
+SEED_SOURCE="${FOLDER}$(basename "$FILE")"
 
 ENDPOINT="$(cfg '.db.restore.s3_endpoint' '')"
 REGION="$(cfg '.db.restore.s3_region' 'us-east-1')"
@@ -100,4 +126,7 @@ AWS_DEFAULT_REGION="$REGION" AWS_EC2_METADATA_DISABLED=true \
   aws "${args[@]}" || die "upload failed — check the key can WRITE to that bucket"
 group_end
 
-log_ok "uploaded — CI will now find the dump at $SEED_SOURCE"
+log_ok "uploaded to $SEED_SOURCE"
+log_info "to use it: Actions → Deploy branch → Run workflow, and put"
+log_info "           $(basename "$FILE")"
+log_info "           in the 'dump' box. Leaving that box blank starts empty."

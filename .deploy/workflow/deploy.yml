@@ -29,7 +29,7 @@ on:
         default: preview
         required: true
       seed:
-        description: "Override the dump for this run (s3://...). Blank = use config.yml"
+        description: "Dump to load — file name only, e.g. baseline.archive.gz. Blank = empty database"
         type: string
         required: false
 
@@ -61,7 +61,7 @@ jobs:
       DEPLOY_STAGE:  ${{ inputs.stage }}
       DEPLOY_BRANCH: ${{ github.ref_name }}
       DEPLOY_SHA:    ${{ github.sha }}
-      DEPLOY_SEED_OVERRIDE: ${{ inputs.seed }}
+      DEPLOY_SEED:   ${{ inputs.seed }}
 
       # ----------------------------------------------------------------------
       # Every repo secret, in one go.

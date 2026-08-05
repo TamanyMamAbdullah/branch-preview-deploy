@@ -90,13 +90,12 @@ trap on_err ERR
 require_cmd jq
 cfg_load "${DEPLOY_CONFIG:-}"
 
-# The workflow's optional `seed` input overrides the dump for this run only.
-# Patched into the in-memory config, so config.yml on disk is never rewritten.
-if [[ -n "${DEPLOY_SEED_OVERRIDE:-}" ]]; then
-  log_warn "seed override for this run only: $DEPLOY_SEED_OVERRIDE"
-  tmp="$(mktemp)"
-  jq --arg s "$DEPLOY_SEED_OVERRIDE" '.db.restore.seed_source=$s' "$CFG_JSON" >"$tmp" && mv "$tmp" "$CFG_JSON"
-fi
+# The deploy button's "dump" box: the NAME of a dump to load for this run only,
+# e.g. baseline.archive.gz. Its location is derived from the config's bucket and
+# this project's name — see seed_resolve_source in steps/seed.sh — so nobody
+# types a URL. Blank means no dump, and no dump means an empty database.
+DEPLOY_SEED="${DEPLOY_SEED:-}"
+export DEPLOY_SEED
 
 compute_names
 secrets_mask_all
