@@ -169,6 +169,82 @@ export differs from `db.database_name`, Mongo needs
 from production puts real customer data into previews that anyone with the
 link can open — recommend a small scrubbed dump instead.
 
+*Q5 — only when this is a frontend* (Vite, CRA, Vue, Svelte…):
+
+**Do not ask them to paste URLs.** Find the shape in the code, ask only for the
+naming rule, and build every environment's URL from tokens.
+
+**First, read it out of the project.** The app already calls a backend. Look in
+`.env.example`, `.env*`, and wherever the HTTP client is created (`src/api*`,
+`src/lib/axios*`, `src/services/*`, `vite.config.*`) for the variable holding
+it and its current value. That gives you the variable NAME (e.g.
+`VITE_BASE_URL`) and the URL SHAPE. Take both from the code — never invent
+either, and never rename their variable.
+
+**Then ask only what the code cannot tell you:**
+
+> "I found `<VARIABLE>` pointing at `<the value you found>`. Two things:
+> 1. Does the backend have a different address per environment (preview, dev,
+>    prod), or does everything talk to one backend?
+> 2. If it differs — what changes between them? The subdomain
+>    (`api-staging` / `api-prod`), the branch name, or something else? Give me
+>    the **rule**, not a list of URLs."
+
+**Then build the value from tokens**, so it resolves itself on every deploy and
+nobody edits config again. Hardcoding a stage name into the URL is the mistake
+this avoids:
+
+| What changes between environments | What to write |
+|---|---|
+| Nothing — one shared backend | the value you found, unchanged |
+| The stage name is in the host | `https://api-${STAGE}.<their domain>` |
+| The branch name is in the host | `https://api-${BRANCH_SLUG}.<their domain>` |
+| The project name is in the host | `https://api-${PROJECT_NAME}.<their domain>` |
+
+Available tokens: `${STAGE}`, `${BRANCH_SLUG}`, `${BRANCH}`, `${ENV_NAME}`,
+`${PROJECT_NAME}`, `${SHA7}`.
+
+**One case where no pattern exists:** if the backend is deployed by this kit and
+uses Railway's *generated* domain, that hostname carries a random part and
+cannot be derived from anything. Do not try. Say so plainly and point previews
+at one fixed backend using the runtime option below.
+
+Now the trap that decides how you write it: `VITE_*` and `REACT_APP_*` values
+are **compiled into the JavaScript at build time**. Setting them on the Railway
+service afterwards does nothing at all. The usual report is "Railway won't let
+me change the variable" — the variable is fine; the value was frozen into the
+bundle.
+
+Pick from their answer:
+
+- **A pattern exists** → bake it. `build_args` values go through the same token
+  substitution, so one line covers every stage. Use THEIR variable name:
+  ```yaml
+  build:
+    build_args:
+      BUILD_TIME_ENV: "VITE_BASE_URL=https://api-${STAGE}.example.com"
+  ```
+- **No pattern, or it must change without a rebuild** → make it a RUNTIME value
+  instead:
+  ```yaml
+  env:
+    static:
+      RUNTIME_ENV: "BASE_URL=https://api-staging.example.com"
+  ```
+  Vary it per stage in `preview_defaults.env`. The shipped frontend preset
+  writes `/env.js` at container start and loads it before the bundle, so the
+  value is a normal Railway variable — editable, no rebuild.
+
+  This one needs a change in the app, which you are NOT allowed to make. Put
+  the exact line in your final report (hard rule 4), naming the real file and
+  the real variable you found:
+  ```js
+  const BASE = window.__ENV__?.BASE_URL ?? import.meta.env.VITE_BASE_URL
+  ```
+  The fallback keeps `npm run dev` working unchanged.
+
+Never put a secret in `build_args` — build args stay readable inside the image.
+
 **1. Install.** Run `bash .deploy/install.sh` once.
 
 **2. Study the project (read-only).** Establish, from the actual code, not

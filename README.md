@@ -192,6 +192,74 @@ And warn them once, in plain words: a dump taken straight from production
 puts real customer data into preview environments that anyone with the link
 can open. Recommend a small scrubbed dump instead.
 
+### Q5 — only if this is a frontend (Vite / CRA / Vue / Svelte)
+
+**Do not ask them to paste URLs.** Find the shape in the code, ask only for the
+naming rule, and build every environment's URL from tokens.
+
+**First, read it out of the project.** The app already calls a backend. Look in
+`.env.example`, `.env*`, and wherever the HTTP client is created (`src/api*`,
+`src/lib/axios*`, `src/services/*`, `vite.config.*`) for the variable holding it
+and its current value. That gives you the variable NAME (e.g. `VITE_BASE_URL`)
+and the URL SHAPE. Take both from the code — never invent either, and never
+rename their variable.
+
+**Then ask only what the code cannot tell you:**
+
+> I found `<VARIABLE>` pointing at `<the value you found>`. Two things:
+> 1. Does the backend have a different address per environment (preview, dev,
+>    prod), or does everything talk to one backend?
+> 2. If it differs — what changes between them? The subdomain (`api-staging` /
+>    `api-prod`), the branch name, or something else? Give me the **rule**, not
+>    a list of URLs.
+
+**Then build the value from tokens**, so it resolves itself on every deploy:
+
+| What changes between environments | What to write |
+|---|---|
+| Nothing — one shared backend | the value you found, unchanged |
+| The stage name is in the host | `https://api-${STAGE}.<their domain>` |
+| The branch name is in the host | `https://api-${BRANCH_SLUG}.<their domain>` |
+| The project name is in the host | `https://api-${PROJECT_NAME}.<their domain>` |
+
+Available tokens: `${STAGE}`, `${BRANCH_SLUG}`, `${BRANCH}`, `${ENV_NAME}`,
+`${PROJECT_NAME}`, `${SHA7}`.
+
+**One case where no pattern exists:** if the backend is deployed by this kit and
+uses Railway's *generated* domain, that hostname carries a random part and
+cannot be derived. Do not try — say so, and point previews at one fixed backend
+with the runtime option below.
+
+**The trap that decides how you write it:** `VITE_*` and `REACT_APP_*` values are
+compiled into the JavaScript **at build time**. Setting them on the Railway
+service afterwards does nothing. Users report this as "Railway won't let me
+change the variable" — the variable is fine; the value was frozen into the
+bundle.
+
+- **A pattern exists** → bake it. `build_args` go through the same token
+  substitution, so one line covers every stage. Use THEIR variable name:
+  ```yaml
+  build:
+    build_args:
+      BUILD_TIME_ENV: "VITE_BASE_URL=https://api-${STAGE}.example.com"
+  ```
+- **No pattern, or it must change without a rebuild** → make it a runtime value:
+  ```yaml
+  env:
+    static:
+      RUNTIME_ENV: "BASE_URL=https://api-staging.example.com"
+  ```
+  Vary it per stage in `preview_defaults.env`. The frontend preset writes
+  `/env.js` at container start and loads it before the bundle, so it becomes an
+  ordinary Railway variable — editable, no rebuild. This needs one line changed
+  in the app, which you may NOT change yourself; put it in the final report with
+  the real file and the real variable:
+  ```js
+  const BASE = window.__ENV__?.BASE_URL ?? import.meta.env.VITE_BASE_URL
+  ```
+
+Never put a secret in `build_args` — they stay readable inside the image.
+
 ## Step 1 — fetch the kit from GitHub into this project
 
 ```bash
@@ -341,6 +409,22 @@ push  →  Actions → Deploy branch → Run workflow  →  URL in the run's sum
 
 Kit updates arrive through the `@v2` tag in that one file — you never
 re-copy anything.
+
+> **Copy `templates/deploy.yml` exactly — do not swap its secrets block for
+> `secrets: inherit`.** The kit passes every repo secret to the config as one
+> JSON value, and that value has to be built in *your* workflow:
+>
+> ```yaml
+>     secrets:
+>       secrets_json: ${{ toJSON(secrets) }}
+> ```
+>
+> `secrets: inherit` looks equivalent and is not. Inherited secrets can be read
+> by name but cannot be listed, so `toJSON(secrets)` inside the kit's workflow
+> returns only `github_token` — and every secret you configured reports as
+> "not set" while your settings page looks perfect. This shipped broken once;
+> `validate` now prints the secret names it can actually see so the cause is
+> visible in one glance.
 
 ## Folder mode — copy the kit in
 
@@ -624,7 +708,7 @@ their logger starts, so **read the first lines of the runtime log first.**
 | `Railway cannot pull the image` | The GHCR package is private — make it public (one-time), or use Railway Pro with registry credentials. Under an organization: an owner has to make it public, and a private image needs `registry_username` set plus a token that can read the package. |
 | `could not open a public port` | The Railway account isn't verified — connect GitHub to Railway. |
 | Restore fails | The dump is from a newer database version than `db.service_image`, or its database name differs from `db.database_name`. |
-| `secret X is not set` | Add it under Settings → Secrets and variables → Actions. |
+| `secret X is not set` | Add it under Settings → Secrets and variables → Actions. If the run's secret-name list is empty or shows only `github_token`, the secret is fine and the workflow is wrong — its secrets block must be `secrets_json: ${{ toJSON(secrets) }}`, not `secrets: inherit`. |
 | `the dump does not exist` | It's only on your laptop — run `bash .deploy/upload-dump.sh`. |
 
 ---

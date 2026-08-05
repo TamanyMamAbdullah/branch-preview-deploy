@@ -166,6 +166,18 @@ step_validate() {
   local stage_env stage_secrets missing=() name src
   stage_env="$(stage_env)"; stage_secrets="$(stage_secret_map)"
 
+  # Required by every action, whatever the config says — checked HERE so it
+  # fails in validate, next to the diagnostic below, instead of surfacing much
+  # later as "could not authenticate". Its absence is also the clearest sign
+  # that NO secret reached the run, which is a workflow bug, not a missing key.
+  if ! secret_has RAILWAY_API_TOKEN && ! secret_has RAILWAY_TEAM_TOKEN; then
+    secret_trouble=1
+    _problem "RAILWAY_API_TOKEN is not set — every deploy and destroy needs it.
+      Create an ACCOUNT token at railway.com/account/tokens (a PROJECT token
+      cannot create environments) and add it under
+      Settings → Secrets and variables → Actions."
+  fi
+
   while IFS= read -r name; do
     [[ -z "$name" ]] && continue
     printf '%s' "$stage_env" | jq -e --arg k "$name" 'has($k)' >/dev/null 2>&1 && continue

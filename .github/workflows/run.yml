@@ -5,7 +5,12 @@
 #   jobs:
 #     deploy:
 #       uses: TamanyMamAbdullah/branch-preview-deploy/.github/workflows/run.yml@v2
-#       secrets: inherit
+#       secrets:
+#         secrets_json: ${{ toJSON(secrets) }}
+#
+# NOT `secrets: inherit`. Inherited secrets are reachable by name but are not
+# enumerable, so toJSON(secrets) inside this file returns only github_token and
+# every configured secret reads as unset.
 #
 # It owns the logic for every trigger, so the caller stays dumb:
 #   workflow_dispatch        deploy or destroy the picked branch (the button)
@@ -38,6 +43,16 @@ on:
         description: "Path to the config file. Blank = auto-discover"
         type: string
         default: ""
+    secrets:
+      # Why the caller passes this instead of using `secrets: inherit`:
+      # toJSON(secrets) INSIDE a called workflow only ever sees github_token —
+      # inherited secrets are reachable by name but are not enumerable. So the
+      # whole-context trick has to be evaluated in the CALLER, where it works,
+      # and handed over as one value. This shipped broken once: every secret
+      # read as unset and the first error blamed the user's settings page.
+      secrets_json:
+        description: "Every caller secret as one JSON value — pass toJSON(secrets)"
+        required: false
     outputs:
       base_url:
         description: "App URL including its route prefix"
@@ -116,4 +131,7 @@ jobs:
           seed:   ${{ inputs.seed }}
           config: ${{ inputs.config }}
           branch: ${{ steps.mode.outputs.branch }}
-          secrets: ${{ toJSON(secrets) }}
+          # secrets_json when the caller passed it (the supported way). The
+          # fallback keeps older callers running instead of erroring, but it
+          # only ever contains github_token — see the note on the input above.
+          secrets: ${{ secrets.secrets_json || toJSON(secrets) }}

@@ -43,11 +43,17 @@ permissions:
 
 jobs:
   deploy:
-    # secrets: inherit hands your repo's secrets to the kit's workflow run —
-    # which still executes inside YOUR repository, on GitHub's runners. That is
-    # how deploy.config.yml can name any secret without this file ever changing.
+    # This one line hands your repo's secrets to the kit — which still runs
+    # inside YOUR repository, on GitHub's runners. It is how deploy.config.yml
+    # can name any secret without this file ever changing.
+    #
+    # It must be toJSON(secrets), NOT `secrets: inherit`. Inherited secrets are
+    # reachable by name but cannot be listed, so the kit would see none of them
+    # and report every secret as "not set" while your settings page looks
+    # perfect. Evaluated here, in your own workflow, it sees everything.
     uses: TamanyMamAbdullah/branch-preview-deploy/.github/workflows/run.yml@v2
-    secrets: inherit
+    secrets:
+      secrets_json: ${{ toJSON(secrets) }}
     with:
       action: ${{ inputs.action || '' }}     # blank on PR-close/delete → destroy
       stage:  ${{ inputs.stage  || 'preview' }}
